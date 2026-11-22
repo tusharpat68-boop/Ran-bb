@@ -1,0 +1,100 @@
+name: CYBER RUNNER Android Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      export_type:
+        description: 'Android output format'
+        required: true
+        default: 'androidPackage'
+        type: choice
+        options:
+          - androidPackage
+          - androidAppBundle
+      include_armv7:
+        description: 'Include 32-bit ARMv7 alongside ARM64 (for older 32-bit Android phones)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Build Android (${{ inputs.export_type || 'androidPackage' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-Android-${{ hashFiles('Packages/manifest.json', 'ProjectSettings/ProjectVersion.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            Library-Android-${{ hashFiles('Packages/manifest.json', 'ProjectSettings/ProjectVersion.txt') }}-
+            Library-Android-
+
+      - name: Prepare optional Android release keystore
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > user.keystore
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+            echo "Release keystore decoded for signed build."
+          else
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+            echo "No release keystore secret set; using Unity Android debug signing."
+          fi
+
+      - name: Build CYBER RUNNER for Android
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: .
+          unityVersion: auto
+          targetPlatform: Android
+          buildName: CyberRunner
+          buildsPath: build
+          versioning: None
+          androidExportType: ${{ inputs.export_type || 'androidPackage' }}
+          buildMethod: CyberRunner.Editor.CyberRunnerBuildPipeline.BuildAndroid
+          customParameters: >-
+            -buildVersion 0.3.0
+            -androidVersionCode ${{ github.run_number }}
+            -includeArmV7 ${{ inputs.include_armv7 || false }}
+            ${{ steps.keystore.outputs.has_keystore == 'true' && format('-androidKeystoreName user.keystore -androidKeystorePass "{0}" -androidKeyaliasName "{1}" -androidKeyaliasPass "{2}"', secrets.ANDROID_KEYSTORE_PASS, secrets.ANDROID_KEYALIAS_NAME, secrets.ANDROID_KEYALIAS_PASS) || '' }}
+
+      - name: Verify build artifact
+        run: |
+          echo "Generated Android artifacts:"
+          ls -lh build/Android/
+
+      - name: Cleanup temporary keystore
+        if: always()
+        run: rm -f user.keystore
+
+      - name: Upload Android Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyberRunner-Android-v0.3.0-build${{ github.run_number }}
+          path: build/Android
+          retention-days: 14
