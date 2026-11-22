@@ -3,17 +3,15 @@ using UnityEngine;
 using UnityEngine.UI;
 using CyberRunner.Collectibles;
 using CyberRunner.Core;
-using CyberRunner.Environment;
 using CyberRunner.Gameplay;
 using CyberRunner.Player;
 
 namespace CyberRunner.UI
 {
     /// <summary>
-    /// Futuristic portrait gameplay HUD (Phases 2 & 3).
-    /// Displays live distance, speed, FPS, Energy Coins, active 3-lane indicator,
-    /// live Sector/Biome badge, dynamic zone transition banner, FPS cap toggle,
-    /// NEXT ZONE instant map switcher, and Crash Summary + RUN AGAIN overlay.
+    /// Phase 2 futuristic dark-navy & neon-cyan mobile HUD and Crash/Restart overlay.
+    /// Displays live distance, speed, Energy Coins, active 3-lane indicator, FPS,
+    /// stumble/slide feedback, FPS cap toggle, and instant zero-lag RUN AGAIN flow.
     /// </summary>
     public sealed class Phase2GameplayHud : MonoBehaviour
     {
@@ -25,8 +23,6 @@ namespace CyberRunner.UI
         private Text speedFpsText;
         private Text coinsText;
         private Text laneText;
-        private Text sectorBadgeText;
-        private Image headerAccentLine;
         private Text statusToastText;
         private Text fpsToggleLabel;
 
@@ -34,7 +30,7 @@ namespace CyberRunner.UI
         private Text crashCauseText;
         private Text crashStatsText;
 
-        private readonly StringBuilder sb = new StringBuilder(192);
+        private readonly StringBuilder sb = new StringBuilder(160);
         private Font uiFont;
 
         private float fpsTimer;
@@ -65,7 +61,6 @@ namespace CyberRunner.UI
             if (runManager != null)
             {
                 runManager.OnRunStarted += HandleRunStarted;
-                runManager.OnBiomeEntered += HandleBiomeEntered;
                 runManager.OnPlayerStumbled += HandleStumbled;
                 runManager.OnRunEnded += HandleRunEnded;
             }
@@ -87,7 +82,6 @@ namespace CyberRunner.UI
             if (runManager != null)
             {
                 runManager.OnRunStarted -= HandleRunStarted;
-                runManager.OnBiomeEntered -= HandleBiomeEntered;
                 runManager.OnPlayerStumbled -= HandleStumbled;
                 runManager.OnRunEnded -= HandleRunEnded;
             }
@@ -164,33 +158,7 @@ namespace CyberRunner.UI
 
             HandleCoinsChanged(coinPool != null ? coinPool.RunCoins : 0, coinPool != null ? coinPool.TotalCoins : 0);
             HandleLaneChanged(playerController != null ? playerController.CurrentLane : 0);
-            ApplyBiomeBadge(runManager != null ? runManager.CurrentBiome : BiomeType.NeonCity, announce: true);
-        }
-
-        private void HandleBiomeEntered(BiomeType biome)
-        {
-            ApplyBiomeBadge(biome, announce: true);
-        }
-
-        private void ApplyBiomeBadge(BiomeType biome, bool announce)
-        {
-            BiomeProfile profile = BiomeCatalog.GetProfile(biome);
-
-            if (sectorBadgeText != null)
-            {
-                sectorBadgeText.text = $"{profile.SectorCode}  //  {profile.DisplayName}";
-                sectorBadgeText.color = profile.UiAccentColor;
-            }
-
-            if (headerAccentLine != null)
-            {
-                headerAccentLine.color = profile.UiAccentColor;
-            }
-
-            if (announce)
-            {
-                ShowToast($"ENTERING {profile.SectorCode} // {profile.DisplayName}", profile.UiAccentColor, 2.3f);
-            }
+            ShowToast("SWIPE: L/R LANES  |  UP JUMP  |  DOWN SLIDE", new Color(0.0f, 0.94f, 1.0f, 1f), 2.4f);
         }
 
         private void HandleCoinsChanged(int runCoins, int totalCoins)
@@ -232,8 +200,6 @@ namespace CyberRunner.UI
                 return;
             }
 
-            BiomeProfile profile = BiomeCatalog.GetProfile(summary.ReachedBiome);
-
             if (crashCauseText != null)
             {
                 crashCauseText.text = $"IMPACT: {summary.CrashCause}";
@@ -242,9 +208,9 @@ namespace CyberRunner.UI
             if (crashStatsText != null)
             {
                 sb.Clear();
-                sb.Append("SECTOR: ").Append(profile.DisplayName).Append('\n');
-                sb.Append("DISTANCE: ").Append(summary.DistanceMeters).Append(" m  (BEST: ").Append(summary.BestDistanceMeters).Append(" m)\n");
-                sb.Append("ENERGY COLLECTED: +").Append(summary.RunCoins).Append('\n');
+                sb.Append("DISTANCE: ").Append(summary.DistanceMeters).Append(" m\n");
+                sb.Append("BEST DISTANCE: ").Append(summary.BestDistanceMeters).Append(" m\n");
+                sb.Append("ENERGY COLLECTED: +").Append(summary.RunCoins).Append("\n");
                 sb.Append("TOTAL ENERGY: ").Append(summary.TotalCoins);
                 crashStatsText.text = sb.ToString();
             }
@@ -269,14 +235,6 @@ namespace CyberRunner.UI
             if (runManager != null)
             {
                 runManager.RestartRun();
-            }
-        }
-
-        private void OnNextZoneClicked()
-        {
-            if (runManager != null)
-            {
-                runManager.SwitchToNextBiomeAndRestart();
             }
         }
 
@@ -315,7 +273,7 @@ namespace CyberRunner.UI
 
         private void BuildHudCanvas()
         {
-            var canvasGo = new GameObject("Phase3HudCanvas");
+            var canvasGo = new GameObject("Phase2HudCanvas");
             canvasGo.transform.SetParent(transform, false);
 
             Canvas canvas = canvasGo.AddComponent<Canvas>();
@@ -333,65 +291,48 @@ namespace CyberRunner.UI
             RectTransform safeRoot = CreatePanel("SafeAreaRoot", canvasGo.transform, Color.clear);
             ApplySafeArea(safeRoot);
 
-            // Top HUD Card
-            RectTransform topBar = CreatePanel("TopBar", safeRoot, new Color(0.03f, 0.06f, 0.13f, 0.80f));
-            topBar.anchorMin = new Vector2(0.04f, 0.868f);
-            topBar.anchorMax = new Vector2(0.96f, 0.986f);
+            // Top HUD Card (clean, non-blocking)
+            RectTransform topBar = CreatePanel("TopBar", safeRoot, new Color(0.03f, 0.06f, 0.13f, 0.78f));
+            topBar.anchorMin = new Vector2(0.04f, 0.885f);
+            topBar.anchorMax = new Vector2(0.96f, 0.985f);
 
-            RectTransform accentRect = CreatePanel("HeaderAccent", topBar, new Color(0.0f, 0.94f, 1.0f, 0.95f));
-            accentRect.anchorMin = new Vector2(0f, 0f);
-            accentRect.anchorMax = new Vector2(1f, 0.032f);
-            headerAccentLine = accentRect.GetComponent<Image>();
+            RectTransform accentLine = CreatePanel("HeaderCyanAccent", topBar, new Color(0.0f, 0.94f, 1.0f, 0.95f));
+            accentLine.anchorMin = new Vector2(0f, 0f);
+            accentLine.anchorMax = new Vector2(1f, 0.035f);
 
-            sectorBadgeText = CreateText("SectorBadge", topBar, "SECTOR 01  //  NEON CITY", 22, new Color(0.0f, 0.94f, 1.0f, 1f), TextAnchor.UpperCenter);
-            sectorBadgeText.rectTransform.anchorMin = new Vector2(0.03f, 0.72f);
-            sectorBadgeText.rectTransform.anchorMax = new Vector2(0.97f, 0.96f);
+            distanceText = CreateText("DistanceText", topBar, "0 m", 44, Color.white, TextAnchor.UpperLeft);
+            distanceText.rectTransform.anchorMin = new Vector2(0.03f, 0.44f);
+            distanceText.rectTransform.anchorMax = new Vector2(0.48f, 0.94f);
 
-            distanceText = CreateText("DistanceText", topBar, "0 m", 42, Color.white, TextAnchor.MiddleLeft);
-            distanceText.rectTransform.anchorMin = new Vector2(0.03f, 0.34f);
-            distanceText.rectTransform.anchorMax = new Vector2(0.48f, 0.74f);
+            speedFpsText = CreateText("SpeedFpsText", topBar, "14.0 m/s  |  60 FPS", 23, new Color(0.75f, 0.88f, 1.0f, 0.92f), TextAnchor.LowerLeft);
+            speedFpsText.rectTransform.anchorMin = new Vector2(0.03f, 0.08f);
+            speedFpsText.rectTransform.anchorMax = new Vector2(0.56f, 0.44f);
 
-            speedFpsText = CreateText("SpeedFpsText", topBar, "14.0 m/s  |  60 FPS", 22, new Color(0.75f, 0.88f, 1.0f, 0.92f), TextAnchor.LowerLeft);
-            speedFpsText.rectTransform.anchorMin = new Vector2(0.03f, 0.06f);
-            speedFpsText.rectTransform.anchorMax = new Vector2(0.56f, 0.36f);
+            coinsText = CreateText("CoinsText", topBar, "ENERGY: 0", 36, new Color(1.0f, 0.84f, 0.14f, 1f), TextAnchor.UpperRight);
+            coinsText.rectTransform.anchorMin = new Vector2(0.50f, 0.46f);
+            coinsText.rectTransform.anchorMax = new Vector2(0.97f, 0.94f);
 
-            coinsText = CreateText("CoinsText", topBar, "ENERGY: 0", 34, new Color(1.0f, 0.84f, 0.14f, 1f), TextAnchor.MiddleRight);
-            coinsText.rectTransform.anchorMin = new Vector2(0.50f, 0.36f);
-            coinsText.rectTransform.anchorMax = new Vector2(0.97f, 0.74f);
+            laneText = CreateText("LaneText", topBar, " L   [ C ]   R ", 25, new Color(0.0f, 0.94f, 1.0f, 1f), TextAnchor.LowerRight);
+            laneText.rectTransform.anchorMin = new Vector2(0.56f, 0.08f);
+            laneText.rectTransform.anchorMax = new Vector2(0.97f, 0.44f);
 
-            laneText = CreateText("LaneText", topBar, " L   [ C ]   R ", 23, new Color(0.0f, 0.94f, 1.0f, 1f), TextAnchor.LowerRight);
-            laneText.rectTransform.anchorMin = new Vector2(0.56f, 0.06f);
-            laneText.rectTransform.anchorMax = new Vector2(0.97f, 0.36f);
+            // Center non-blocking toast
+            statusToastText = CreateText("StatusToast", safeRoot, string.Empty, 30, new Color(0.0f, 0.94f, 1.0f, 1f), TextAnchor.MiddleCenter);
+            statusToastText.rectTransform.anchorMin = new Vector2(0.06f, 0.78f);
+            statusToastText.rectTransform.anchorMax = new Vector2(0.94f, 0.85f);
 
-            // Center non-blocking zone & action banner
-            statusToastText = CreateText("StatusToast", safeRoot, string.Empty, 28, new Color(0.0f, 0.94f, 1.0f, 1f), TextAnchor.MiddleCenter);
-            statusToastText.rectTransform.anchorMin = new Vector2(0.05f, 0.775f);
-            statusToastText.rectTransform.anchorMax = new Vector2(0.95f, 0.845f);
-
-            // Bottom-left FPS cap toggle
+            // Compact bottom-left FPS cap toggle button
             fpsToggleLabel = CreateActionButton(
                 "FpsToggleButton",
                 safeRoot,
-                new Vector2(0.04f, 0.024f),
-                new Vector2(0.26f, 0.080f),
+                new Vector2(0.04f, 0.025f),
+                new Vector2(0.26f, 0.082f),
                 new Color(0.08f, 0.06f, 0.18f, 0.82f),
                 new Color(0.68f, 0.22f, 1.0f, 0.95f),
                 "60 FPS",
-                25,
+                26,
                 OnToggleFpsClicked);
             UpdateFpsButtonLabel();
-
-            // Bottom-right NEXT ZONE button to immediately preview all 5 futuristic environments
-            CreateActionButton(
-                "NextZoneButton",
-                safeRoot,
-                new Vector2(0.66f, 0.024f),
-                new Vector2(0.96f, 0.080f),
-                new Color(0.03f, 0.14f, 0.22f, 0.84f),
-                new Color(0.0f, 0.94f, 1.0f, 0.95f),
-                "NEXT ZONE >>",
-                25,
-                OnNextZoneClicked);
 
             BuildCrashOverlay(safeRoot);
         }
@@ -402,34 +343,34 @@ namespace CyberRunner.UI
             crashPanel = backdrop.gameObject;
 
             RectTransform card = CreatePanel("CrashCard", backdrop, new Color(0.04f, 0.08f, 0.17f, 0.96f));
-            card.anchorMin = new Vector2(0.09f, 0.26f);
-            card.anchorMax = new Vector2(0.91f, 0.75f);
+            card.anchorMin = new Vector2(0.10f, 0.28f);
+            card.anchorMax = new Vector2(0.90f, 0.74f);
 
             Outline cardBorder = card.gameObject.AddComponent<Outline>();
             cardBorder.effectColor = new Color(0.0f, 0.94f, 1.0f, 0.95f);
             cardBorder.effectDistance = new Vector2(3f, -3f);
 
-            Text header = CreateText("CrashHeader", card, "RUN TERMINATED", 46, new Color(1.0f, 0.20f, 0.34f, 1f), TextAnchor.MiddleCenter);
-            header.rectTransform.anchorMin = new Vector2(0.05f, 0.80f);
+            Text header = CreateText("CrashHeader", card, "RUN TERMINATED", 48, new Color(1.0f, 0.20f, 0.34f, 1f), TextAnchor.MiddleCenter);
+            header.rectTransform.anchorMin = new Vector2(0.05f, 0.78f);
             header.rectTransform.anchorMax = new Vector2(0.95f, 0.94f);
 
-            crashCauseText = CreateText("CrashCause", card, "IMPACT: OBSTACLE", 27, new Color(1.0f, 0.68f, 0.18f, 1f), TextAnchor.MiddleCenter);
-            crashCauseText.rectTransform.anchorMin = new Vector2(0.05f, 0.68f);
-            crashCauseText.rectTransform.anchorMax = new Vector2(0.95f, 0.79f);
+            crashCauseText = CreateText("CrashCause", card, "IMPACT: OBSTACLE", 28, new Color(1.0f, 0.68f, 0.18f, 1f), TextAnchor.MiddleCenter);
+            crashCauseText.rectTransform.anchorMin = new Vector2(0.05f, 0.65f);
+            crashCauseText.rectTransform.anchorMax = new Vector2(0.95f, 0.77f);
 
-            crashStatsText = CreateText("CrashStats", card, string.Empty, 30, Color.white, TextAnchor.MiddleCenter);
-            crashStatsText.rectTransform.anchorMin = new Vector2(0.06f, 0.26f);
-            crashStatsText.rectTransform.anchorMax = new Vector2(0.94f, 0.66f);
+            crashStatsText = CreateText("CrashStats", card, string.Empty, 32, Color.white, TextAnchor.MiddleCenter);
+            crashStatsText.rectTransform.anchorMin = new Vector2(0.08f, 0.26f);
+            crashStatsText.rectTransform.anchorMax = new Vector2(0.92f, 0.63f);
 
             CreateActionButton(
                 "RunAgainButton",
                 card,
                 new Vector2(0.14f, 0.06f),
-                new Vector2(0.86f, 0.21f),
+                new Vector2(0.86f, 0.22f),
                 new Color(0.0f, 0.22f, 0.30f, 0.96f),
                 new Color(0.0f, 0.94f, 1.0f, 1f),
                 "RUN AGAIN",
-                34,
+                36,
                 OnRestartClicked);
 
             crashPanel.SetActive(false);

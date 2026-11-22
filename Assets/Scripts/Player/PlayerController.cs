@@ -437,10 +437,10 @@ namespace CyberRunner.Player
             Vector3 displacement = new Vector3(deltaX, VerticalVelocity * dt, CurrentForwardSpeed * dt);
             characterController.Move(displacement);
 
-            // Catch falling through Sky Highway road gaps promptly.
-            if (transform.position.y < -2.2f)
+            // Prevent falling infinitely if a future gap or edge is encountered.
+            if (transform.position.y < -6f)
             {
-                TriggerCrash("SKY ABYSS GAP");
+                TriggerCrash("FELL OFF TRACK");
                 return;
             }
 

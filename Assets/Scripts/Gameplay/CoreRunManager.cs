@@ -16,13 +16,12 @@ namespace CyberRunner.Gameplay
         public int RunCoins;
         public int TotalCoins;
         public string CrashCause;
-        public BiomeType ReachedBiome;
     }
 
     /// <summary>
-    /// Core Run Orchestrator (Phases 2 & 3).
-    /// Coordinates PlayerController, EndlessTrackManager (5 futuristic biomes),
-    /// BiomeAtmosphereController, ObstaclePoolManager, CoinPoolManager, and CyberCameraController.
+    /// Phase 2 Core Run Orchestrator.
+    /// Coordinates PlayerController, EndlessTrackManager, ObstaclePoolManager,
+    /// CoinPoolManager, and CyberCameraController with zero-lag instant restarts.
     /// </summary>
     public sealed class CoreRunManager : MonoBehaviour
     {
@@ -33,7 +32,6 @@ namespace CyberRunner.Gameplay
         [SerializeField] private PlayerController playerController;
         [SerializeField] private CyberCameraController cameraController;
         [SerializeField] private EndlessTrackManager trackManager;
-        [SerializeField] private BiomeAtmosphereController atmosphereController;
         [SerializeField] private ObstaclePoolManager obstaclePool;
         [SerializeField] private CoinPoolManager coinPool;
 
@@ -41,13 +39,11 @@ namespace CyberRunner.Gameplay
         [SerializeField] private Vector3 playerSpawnPosition = new Vector3(0f, 0.05f, 4f);
 
         public event Action OnRunStarted;
-        public event Action<BiomeType> OnBiomeEntered;
         public event Action<string> OnPlayerStumbled;
         public event Action<Phase2RunSummary> OnRunEnded;
 
         public bool IsRunActive { get; private set; }
         public int BestDistanceMeters { get; private set; }
-        public BiomeType CurrentBiome => trackManager != null ? trackManager.ActiveBiome : BiomeType.NeonCity;
         public PlayerController Player => playerController;
         public CoinPoolManager CoinPool => coinPool;
 
@@ -56,7 +52,6 @@ namespace CyberRunner.Gameplay
             PlayerController player,
             CyberCameraController cam,
             EndlessTrackManager track,
-            BiomeAtmosphereController atmosphere,
             ObstaclePoolManager obstacles,
             CoinPoolManager coins)
         {
@@ -64,7 +59,6 @@ namespace CyberRunner.Gameplay
             playerController = player;
             cameraController = cam;
             trackManager = track;
-            atmosphereController = atmosphere;
             obstaclePool = obstacles;
             coinPool = coins;
         }
@@ -81,7 +75,6 @@ namespace CyberRunner.Gameplay
             if (playerController == null) playerController = FindFirstObjectByType<PlayerController>();
             if (cameraController == null) cameraController = FindFirstObjectByType<CyberCameraController>();
             if (trackManager == null) trackManager = FindFirstObjectByType<EndlessTrackManager>();
-            if (atmosphereController == null) atmosphereController = FindFirstObjectByType<BiomeAtmosphereController>();
             if (obstaclePool == null) obstaclePool = FindFirstObjectByType<ObstaclePoolManager>();
             if (coinPool == null) coinPool = FindFirstObjectByType<CoinPoolManager>();
         }
@@ -94,11 +87,6 @@ namespace CyberRunner.Gameplay
                 playerController.OnStumbled += HandlePlayerStumbled;
                 playerController.OnCrashed += HandlePlayerCrashed;
             }
-
-            if (trackManager != null)
-            {
-                trackManager.OnActiveBiomeChanged += HandleBiomeChanged;
-            }
         }
 
         private void OnDisable()
@@ -109,28 +97,10 @@ namespace CyberRunner.Gameplay
                 playerController.OnStumbled -= HandlePlayerStumbled;
                 playerController.OnCrashed -= HandlePlayerCrashed;
             }
-
-            if (trackManager != null)
-            {
-                trackManager.OnActiveBiomeChanged -= HandleBiomeChanged;
-            }
         }
 
         private void Start()
         {
-            RestartRun();
-        }
-
-        /// <summary>
-        /// Cycles to the next futuristic environment sector and starts a fresh run immediately.
-        /// </summary>
-        public void SwitchToNextBiomeAndRestart()
-        {
-            if (trackManager != null)
-            {
-                trackManager.CycleStartingBiome();
-            }
-
             RestartRun();
         }
 
@@ -148,10 +118,6 @@ namespace CyberRunner.Gameplay
 
             if (trackManager != null)
             {
-                if (atmosphereController != null)
-                {
-                    atmosphereController.ApplyImmediate(trackManager.StartingBiome);
-                }
                 trackManager.ResetTrack();
             }
 
@@ -186,7 +152,7 @@ namespace CyberRunner.Gameplay
 
             if (trackManager != null)
             {
-                trackManager.TickTrack(playerPos.z, playerController.CurrentForwardSpeed, dt);
+                trackManager.TickTrack(playerPos.z, playerController.CurrentForwardSpeed);
             }
 
             if (obstaclePool != null)
@@ -198,16 +164,6 @@ namespace CyberRunner.Gameplay
             {
                 coinPool.TickActive(dt, playerPos);
             }
-        }
-
-        private void HandleBiomeChanged(BiomeType nextBiome)
-        {
-            if (atmosphereController != null)
-            {
-                atmosphereController.TransitionTo(nextBiome);
-            }
-
-            OnBiomeEntered?.Invoke(nextBiome);
         }
 
         private void HandleCoinTouched(EnergyCoin coin)
@@ -261,8 +217,7 @@ namespace CyberRunner.Gameplay
                 BestDistanceMeters = BestDistanceMeters,
                 RunCoins = coinPool != null ? coinPool.RunCoins : 0,
                 TotalCoins = coinPool != null ? coinPool.TotalCoins : 0,
-                CrashCause = string.IsNullOrEmpty(causeName) ? "OBSTACLE" : causeName,
-                ReachedBiome = CurrentBiome
+                CrashCause = string.IsNullOrEmpty(causeName) ? "OBSTACLE" : causeName
             };
 
             OnRunEnded?.Invoke(summary);
