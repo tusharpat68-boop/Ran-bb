@@ -3,15 +3,14 @@ using UnityEngine;
 using CyberRunner.Collectibles;
 using CyberRunner.Core;
 using CyberRunner.Obstacles;
+using CyberRunner.PowerUps;
 
 namespace CyberRunner.Player
 {
     /// <summary>
-    /// Phase 2 Cyber Runner locomotion & collision controller.
-    /// Drives automatic forward running with smooth distance speed scaling, responsive
-    /// three-lane switching with input buffering, coyote-time/buffered jumping,
-    /// cyber-sliding + mid-air fast-fall slam-to-slide, and zero-GC PhysX OverlapCapsule
-    /// obstacle & Energy Coin detection.
+    /// Cyber Runner locomotion, power-up physics, & zero-GC PhysX collision controller.
+    /// Supports 3-lane movement, jumping, cyber-sliding + fast-fall, Hover Boots altitude cruise,
+    /// Speed Boost surges, Cyber Shield impact interception, and Pause state.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public sealed class PlayerController : MonoBehaviour
@@ -33,6 +32,12 @@ namespace CyberRunner.Player
         public event Action<string> OnStumbled;
         public event Action<string> OnCrashed;
         public event Action<EnergyCoin> OnCoinTouched;
+        public event Action<PowerUpPickup> OnPowerUpTouched;
+
+        /// <summary>
+        /// Optional delegate invoked before an obstacle causes a crash (returns true if absorbed by Shield or Speed Boost).
+        /// </summary>
+        public Func<ObstacleController, bool> ObstacleImpactInterceptor { get; set; }
 
         public PlayerState CurrentState { get; private set; } = PlayerState.Idle;
         public int CurrentLane { get; private set; } // -1 = Left, 0 = Center, +1 = Right
@@ -41,6 +46,8 @@ namespace CyberRunner.Player
         public float DistanceTraveled { get; private set; }
         public bool IsGrounded { get; private set; }
         public bool IsSliding { get; private set; }
+        public bool IsPaused { get; private set; }
+        public bool IsHovering { get; private set; }
         public bool IsAlive => CurrentState != PlayerState.Dead;
         public float NormalizedSpeed => config != null && config.maxRunSpeed > config.baseRunSpeed
             ? Mathf.Clamp01((CurrentForwardSpeed - config.baseRunSpeed) / (config.maxRunSpeed - config.baseRunSpeed))
@@ -64,6 +71,11 @@ namespace CyberRunner.Player
 
         private float stumbleRecoveryTimer;
         private float stumbleGraceTimer;
+
+        private float externalTargetSpeed;
+        private bool speedBoostActive;
+        private bool hoverBootsActive;
+        private float hoverDipOverrideTimer;
 
         private bool wasGrounded;
         private bool isRunningActive;
@@ -138,7 +150,13 @@ namespace CyberRunner.Player
         public void ResetForNewRun(Vector3 spawnPosition)
         {
             isRunningActive = false;
+            IsPaused = false;
             IsSliding = false;
+            IsHovering = false;
+            speedBoostActive = false;
+            hoverBootsActive = false;
+            hoverDipOverrideTimer = 0f;
+            externalTargetSpeed = 0f;
             pendingSlideOnLand = false;
             slideTimer = 0f;
             stumbleRecoveryTimer = 0f;
@@ -176,6 +194,21 @@ namespace CyberRunner.Player
             StartRun();
         }
 
+        public void EnterMenuShowcaseMode(Vector3 spawnPosition)
+        {
+            ResetForNewRun(spawnPosition);
+            isRunningActive = false;
+            IsPaused = true;
+            CurrentForwardSpeed = 0f;
+            SetState(PlayerState.Idle);
+
+            if (visualRig != null)
+            {
+                visualRig.ResetVisualPose();
+                visualRig.UpdateAnimation(PlayerState.Idle, 0f, 0f, 0.016f, 0f);
+            }
+        }
+
         public void StartRun()
         {
             isRunningActive = true;
@@ -187,9 +220,27 @@ namespace CyberRunner.Player
             SetState(PlayerState.Running);
         }
 
+        public void SetPaused(bool paused)
+        {
+            IsPaused = paused;
+        }
+
+        public void SetExternalMovementModifiers(float difficultyTargetSpeed, bool speedBoost, bool hoverBoots)
+        {
+            externalTargetSpeed = difficultyTargetSpeed;
+            speedBoostActive = speedBoost;
+            hoverBootsActive = hoverBoots;
+            IsHovering = hoverBoots && hoverDipOverrideTimer <= 0f;
+        }
+
+        public void GrantTemporaryGrace(float seconds)
+        {
+            stumbleGraceTimer = Mathf.Max(stumbleGraceTimer, seconds);
+        }
+
         public void RequestJump()
         {
-            if (!isRunningActive || CurrentState == PlayerState.Dead)
+            if (!isRunningActive || IsPaused || CurrentState == PlayerState.Dead)
             {
                 return;
             }
@@ -199,14 +250,24 @@ namespace CyberRunner.Player
                 EndSlide();
             }
 
+            hoverDipOverrideTimer = 0f;
             pendingSlideOnLand = false;
             jumpBufferTimer = config.jumpBufferTime;
         }
 
         public void RequestSlide()
         {
-            if (!isRunningActive || CurrentState == PlayerState.Dead)
+            if (!isRunningActive || IsPaused || CurrentState == PlayerState.Dead)
             {
+                return;
+            }
+
+            if (hoverBootsActive)
+            {
+                // Swipe down while hovering dips to ground level to slide under overhead lasers.
+                hoverDipOverrideTimer = config.slideDuration + 0.25f;
+                VerticalVelocity = Mathf.Min(VerticalVelocity, config.fastFallVelocity);
+                pendingSlideOnLand = true;
                 return;
             }
 
@@ -224,7 +285,7 @@ namespace CyberRunner.Player
 
         public void RequestLaneChange(int delta)
         {
-            if (!isRunningActive || CurrentState == PlayerState.Dead || delta == 0)
+            if (!isRunningActive || IsPaused || CurrentState == PlayerState.Dead || delta == 0)
             {
                 return;
             }
@@ -258,6 +319,11 @@ namespace CyberRunner.Player
 
         private void Update()
         {
+            if (IsPaused)
+            {
+                return;
+            }
+
             float dt = Time.deltaTime;
             if (dt <= 0f)
             {
@@ -301,6 +367,12 @@ namespace CyberRunner.Player
                 stumbleGraceTimer = Mathf.Max(0f, stumbleGraceTimer - dt);
             }
 
+            if (hoverDipOverrideTimer > 0f)
+            {
+                hoverDipOverrideTimer = Mathf.Max(0f, hoverDipOverrideTimer - dt);
+            }
+            IsHovering = hoverBootsActive && hoverDipOverrideTimer <= 0f;
+
             if (laneBufferTimer > 0f)
             {
                 laneBufferTimer = Mathf.Max(0f, laneBufferTimer - dt);
@@ -321,20 +393,14 @@ namespace CyberRunner.Player
 
         private void UpdateForwardSpeed(float dt)
         {
-            float distanceBonus = (DistanceTraveled / 100f) * config.speedIncreasePer100Meters;
-            float targetSpeed = Mathf.Min(config.maxRunSpeed, config.baseRunSpeed + distanceBonus);
+            float baseTarget = externalTargetSpeed > 0f
+                ? externalTargetSpeed
+                : Mathf.Min(config.maxRunSpeed, config.baseRunSpeed + ((DistanceTraveled / 100f) * config.speedIncreasePer100Meters));
 
-            if (CurrentForwardSpeed < targetSpeed)
-            {
-                CurrentForwardSpeed = Mathf.MoveTowards(
-                    CurrentForwardSpeed,
-                    targetSpeed,
-                    config.startupAcceleration * dt);
-            }
-            else
-            {
-                CurrentForwardSpeed = targetSpeed;
-            }
+            float targetSpeed = speedBoostActive ? (baseTarget * 1.45f) : baseTarget;
+            float accel = speedBoostActive ? (config.startupAcceleration * 2.2f) : config.startupAcceleration;
+
+            CurrentForwardSpeed = Mathf.MoveTowards(CurrentForwardSpeed, targetSpeed, accel * dt);
         }
 
         private void BeginSlide()
@@ -383,6 +449,16 @@ namespace CyberRunner.Player
 
         private void UpdateJumpAndGravity(float dt)
         {
+            // Hover Boots smoothly lift the runner to a safe cruise height (clears low barriers & Sky Highway gaps!).
+            if (IsHovering)
+            {
+                const float hoverCruiseY = 1.48f;
+                float heightError = hoverCruiseY - transform.position.y;
+                VerticalVelocity = Mathf.Clamp(heightError * 9.5f, -12f, 14f);
+                jumpBufferTimer = 0f;
+                return;
+            }
+
             if (characterController.isGrounded)
             {
                 coyoteTimer = config.coyoteTime;
@@ -437,10 +513,10 @@ namespace CyberRunner.Player
             Vector3 displacement = new Vector3(deltaX, VerticalVelocity * dt, CurrentForwardSpeed * dt);
             characterController.Move(displacement);
 
-            // Prevent falling infinitely if a future gap or edge is encountered.
-            if (transform.position.y < -6f)
+            // Catch falling through Sky Highway road gaps promptly.
+            if (transform.position.y < -2.2f)
             {
-                TriggerCrash("FELL OFF TRACK");
+                TriggerCrash("SKY ABYSS GAP");
                 return;
             }
 
@@ -511,6 +587,15 @@ namespace CyberRunner.Player
                     continue;
                 }
 
+                if (col.TryGetComponent(out PowerUpPickup pickup))
+                {
+                    if (!pickup.IsCollected)
+                    {
+                        OnPowerUpTouched?.Invoke(pickup);
+                    }
+                    continue;
+                }
+
                 if (col.TryGetComponent(out ObstacleController obstacle))
                 {
                     ResolveObstacleOverlap(obstacle);
@@ -532,7 +617,7 @@ namespace CyberRunner.Player
             float playerFeetY = transform.position.y;
             float playerHeadY = playerFeetY + characterController.height;
 
-            // Fair jump clearance over low road barriers.
+            // Fair jump / Hover Boots clearance over low road barriers & industrial rotors.
             if (obstacle.CanJumpOver && playerFeetY >= obstacle.ClearanceTopY - 0.18f)
             {
                 return;
@@ -544,8 +629,15 @@ namespace CyberRunner.Player
                 return;
             }
 
-            // Brief grace invulnerability right after recovering from a side graze.
+            // Brief grace invulnerability right after recovering from a side graze or shield absorb.
             if (stumbleGraceTimer > 0f)
+            {
+                obstacle.MarkCollisionResolved();
+                return;
+            }
+
+            // Allow active Speed Boost ram-through or Cyber Shield absorption to intercept impact cleanly!
+            if (ObstacleImpactInterceptor != null && ObstacleImpactInterceptor(obstacle))
             {
                 obstacle.MarkCollisionResolved();
                 return;

@@ -1,0 +1,195 @@
+name: CYBER RUNNER Tagged Release (APK + AAB)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-android:
+    name: Build & Publish Android Release (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Extract semantic version & pre-flight check secrets
+        id: preflight
+        env:
+          RAW_UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          RAW_UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          RAW_UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          RAW_UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          RAW_UNITY_LICENSING_SERVER: ${{ secrets.UNITY_LICENSING_SERVER }}
+          RAW_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building CYBER RUNNER release v$VERSION (versionCode ${{ github.run_number }})"
+
+          if [ ! -f "ProjectSettings/ProjectVersion.txt" ] || [ ! -f "Packages/manifest.json" ]; then
+            echo "::error::Unity project files not found at repository root."
+            exit 1
+          fi
+
+          python3 - << 'PY'
+          import os, base64, secrets
+
+          lic = os.environ.get("RAW_UNITY_LICENSE", "").strip()
+          email = os.environ.get("RAW_UNITY_EMAIL", "").strip()
+          pwd = os.environ.get("RAW_UNITY_PASSWORD", "").strip()
+          serial = os.environ.get("RAW_UNITY_SERIAL", "").strip()
+          server = os.environ.get("RAW_UNITY_LICENSING_SERVER", "").strip()
+          has_ks = bool(os.environ.get("RAW_KEYSTORE_B64", "").strip())
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"has_keystore={'true' if has_ks else 'false'}\n")
+
+          if not has_ks:
+              print("::warning::ANDROID_KEYSTORE_BASE64 not set; release artifacts will be debug-signed.")
+
+          if server or (serial and email and pwd):
+              raise SystemExit(0)
+
+          if lic:
+              missing = []
+              if not email:
+                  missing.append("UNITY_EMAIL")
+              if not pwd:
+                  missing.append("UNITY_PASSWORD")
+              if missing:
+                  print(f"::error::UNITY_LICENSE is set, but required Unity account secret(s) are missing: {', '.join(missing)}.")
+                  raise SystemExit(1)
+
+              resolved_xml = None
+              if "<root" in lic or "<?xml" in lic:
+                  resolved_xml = lic
+              else:
+                  try:
+                      decoded = base64.b64decode(lic).decode("utf-8")
+                      if "<root" in decoded or "<?xml" in decoded:
+                          resolved_xml = decoded
+                  except Exception:
+                      pass
+              if resolved_xml:
+                  for line in resolved_xml.splitlines():
+                      if line.strip():
+                          print(f"::add-mask::{line}")
+                  delim = "UNITY_LIC_" + secrets.token_hex(12)
+                  with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as envf:
+                      envf.write(f"RESOLVED_UNITY_LICENSE<<{delim}\n{resolved_xml}\n{delim}\n")
+                  raise SystemExit(0)
+
+              print("::error::UNITY_LICENSE secret is set, but its contents are not valid Unity_lic.ulf XML (nor Base64-encoded XML).")
+              raise SystemExit(1)
+
+          print("::error::Missing valid Unity license secrets. Configure UNITY_LICENSE + UNITY_EMAIL + UNITY_PASSWORD (Personal), UNITY_SERIAL + UNITY_EMAIL + UNITY_PASSWORD (Pro/Plus), or UNITY_LICENSING_SERVER.")
+          raise SystemExit(1)
+          PY
+
+      - name: Free disk space on Ubuntu runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-Release-${{ hashFiles('Packages/manifest.json', 'ProjectSettings/ProjectVersion.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            Library-Release-${{ hashFiles('Packages/manifest.json', 'ProjectSettings/ProjectVersion.txt') }}-
+            Library-Android-
+
+      - name: Build Release APK
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ env.RESOLVED_UNITY_LICENSE || secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: .
+          unityVersion: 6000.0.86f1
+          targetPlatform: Android
+          unityLicensingServer: ${{ secrets.UNITY_LICENSING_SERVER }}
+          allowDirtyBuild: true
+          buildName: CyberRunner-${{ github.ref_name }}
+          buildsPath: build-apk
+          versioning: Custom
+          version: ${{ steps.preflight.outputs.version }}
+          androidVersionCode: ${{ github.run_number }}
+          androidExportType: androidPackage
+          androidKeystoreName: ${{ steps.preflight.outputs.has_keystore == 'true' && 'user.keystore' || '' }}
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+          buildMethod: CyberRunner.Editor.CyberRunnerBuildPipeline.BuildAndroid
+          customParameters: -includeArmV7 false
+
+      - name: Build Release AAB (Google Play)
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ env.RESOLVED_UNITY_LICENSE || secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: .
+          unityVersion: 6000.0.86f1
+          targetPlatform: Android
+          unityLicensingServer: ${{ secrets.UNITY_LICENSING_SERVER }}
+          allowDirtyBuild: true
+          buildName: CyberRunner-${{ github.ref_name }}
+          buildsPath: build-aab
+          versioning: Custom
+          version: ${{ steps.preflight.outputs.version }}
+          androidVersionCode: ${{ github.run_number }}
+          androidExportType: androidAppBundle
+          androidKeystoreName: ${{ steps.preflight.outputs.has_keystore == 'true' && 'user.keystore' || '' }}
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+          buildMethod: CyberRunner.Editor.CyberRunnerBuildPipeline.BuildAndroid
+          customParameters: -includeArmV7 false
+
+      - name: Prepare release files & checksums
+        run: |
+          mkdir -p release-output
+          find build-apk build-aab -type f \( -name "*.apk" -o -name "*.aab" \) -exec cp -v {} release-output/ \; 2>/dev/null || true
+          if [ -z "$(ls -A release-output)" ]; then
+            echo "::error::Release build did not emit any .apk or .aab files."
+            exit 1
+          fi
+          cd release-output
+          ls -lh
+          sha256sum *.apk *.aab > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Cleanup temporary keystore
+        if: always()
+        run: rm -f user.keystore
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CYBER RUNNER ${{ github.ref_name }} (Android Release)
+          body: |
+            Automated Android release build for **CYBER RUNNER (`com.cyberrunner.game`)**.
+            - Direct install: `CyberRunner-${{ github.ref_name }}.apk`
+            - Google Play Console upload: `CyberRunner-${{ github.ref_name }}.aab`
+            - Integrity verification: `SHA256SUMS.txt`
+          files: |
+            release-output/*.apk
+            release-output/*.aab
+            release-output/SHA256SUMS.txt

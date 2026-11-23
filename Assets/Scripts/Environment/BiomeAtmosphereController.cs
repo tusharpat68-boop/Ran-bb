@@ -1,11 +1,12 @@
 using UnityEngine;
 using UnityEngine.Rendering;
+using CyberRunner.Core;
 
 namespace CyberRunner.Environment
 {
     /// <summary>
     /// Smoothly interpolates fog, sky clear color, trilight ambient lighting, and directional key light
-    /// across all five futuristic environments with zero heap allocations.
+    /// across all five futuristic environments with zero heap allocations and PerformanceOptimizer LOD fog scaling.
     /// </summary>
     public sealed class BiomeAtmosphereController : MonoBehaviour
     {
@@ -42,14 +43,43 @@ namespace CyberRunner.Environment
             ApplyImmediate(BiomeType.NeonCity);
         }
 
+        private void OnEnable()
+        {
+            if (PerformanceOptimizer.Instance != null)
+            {
+                PerformanceOptimizer.Instance.OnOptimizationProfileApplied += ReapplyActiveFogScale;
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (PerformanceOptimizer.Instance != null)
+            {
+                PerformanceOptimizer.Instance.OnOptimizationProfileApplied -= ReapplyActiveFogScale;
+            }
+        }
+
+        private void ReapplyActiveFogScale()
+        {
+            float fogScale = GetFogScale();
+            RenderSettings.fogStartDistance = targetProfile.FogStart * fogScale;
+            RenderSettings.fogEndDistance = targetProfile.FogEnd * fogScale;
+        }
+
+        private static float GetFogScale()
+        {
+            return PerformanceOptimizer.Instance != null ? PerformanceOptimizer.Instance.FogDistanceScale : 1f;
+        }
+
         public void ApplyImmediate(BiomeType biome)
         {
             targetProfile = BiomeCatalog.GetProfile(biome);
             isBlending = false;
+            float fogScale = GetFogScale();
 
             RenderSettings.fogColor = targetProfile.FogColor;
-            RenderSettings.fogStartDistance = targetProfile.FogStart;
-            RenderSettings.fogEndDistance = targetProfile.FogEnd;
+            RenderSettings.fogStartDistance = targetProfile.FogStart * fogScale;
+            RenderSettings.fogEndDistance = targetProfile.FogEnd * fogScale;
             RenderSettings.ambientSkyColor = targetProfile.AmbientSky;
             RenderSettings.ambientEquatorColor = targetProfile.AmbientEquator;
             RenderSettings.ambientGroundColor = targetProfile.AmbientGround;
@@ -86,10 +116,13 @@ namespace CyberRunner.Environment
             }
 
             float t = 1f - Mathf.Exp(-blendSharpness * dt);
+            float fogScale = GetFogScale();
+            float desiredFogStart = targetProfile.FogStart * fogScale;
+            float desiredFogEnd = targetProfile.FogEnd * fogScale;
 
             RenderSettings.fogColor = Color.Lerp(RenderSettings.fogColor, targetProfile.FogColor, t);
-            RenderSettings.fogStartDistance = Mathf.Lerp(RenderSettings.fogStartDistance, targetProfile.FogStart, t);
-            RenderSettings.fogEndDistance = Mathf.Lerp(RenderSettings.fogEndDistance, targetProfile.FogEnd, t);
+            RenderSettings.fogStartDistance = Mathf.Lerp(RenderSettings.fogStartDistance, desiredFogStart, t);
+            RenderSettings.fogEndDistance = Mathf.Lerp(RenderSettings.fogEndDistance, desiredFogEnd, t);
             RenderSettings.ambientSkyColor = Color.Lerp(RenderSettings.ambientSkyColor, targetProfile.AmbientSky, t);
             RenderSettings.ambientEquatorColor = Color.Lerp(RenderSettings.ambientEquatorColor, targetProfile.AmbientEquator, t);
             RenderSettings.ambientGroundColor = Color.Lerp(RenderSettings.ambientGroundColor, targetProfile.AmbientGround, t);
@@ -106,7 +139,7 @@ namespace CyberRunner.Environment
             }
 
             // Stop blending once converged to save CPU cycles.
-            if (Mathf.Abs(RenderSettings.fogEndDistance - targetProfile.FogEnd) < 0.08f &&
+            if (Mathf.Abs(RenderSettings.fogEndDistance - desiredFogEnd) < 0.08f &&
                 ColorDelta(RenderSettings.fogColor, targetProfile.FogColor) < 0.004f)
             {
                 ApplyImmediate(targetProfile.Type);

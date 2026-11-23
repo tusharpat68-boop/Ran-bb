@@ -58,11 +58,13 @@ namespace CyberRunner.Collectibles
         }
 
         /// <summary>
-        /// Advances coin rotation/bob or collection pop animation.
+        /// Advances coin rotation/bob, magnetic pull, or collection pop animation.
         /// Returns true when the collection animation completes and the coin should return to the pool.
         /// </summary>
-        public bool Tick(float deltaTime, Vector3 playerPosition)
+        public bool Tick(float deltaTime, Vector3 playerPosition, bool magnetActive = false, float magnetRadiusSq = 156f, out bool reachedPlayerByMagnet)
         {
+            reachedPlayerByMagnet = false;
+
             if (IsCollected)
             {
                 collectAnimTimer += deltaTime;
@@ -83,6 +85,31 @@ namespace CyberRunner.Collectibles
             }
 
             spinAngle += 165f * deltaTime;
+
+            if (magnetActive)
+            {
+                Vector3 magnetTarget = playerPosition + new Vector3(0f, 1.15f, 0.35f);
+                Vector3 delta = magnetTarget - transform.position;
+                float distSq = delta.sqrMagnitude;
+                if (distSq <= magnetRadiusSq)
+                {
+                    Vector3 pulled = Vector3.MoveTowards(transform.position, magnetTarget, 34f * deltaTime);
+                    transform.position = pulled;
+                    spawnPosition = pulled;
+
+                    if (visualTransform != null)
+                    {
+                        visualTransform.localRotation = Quaternion.Euler(45f, spinAngle, 45f);
+                    }
+
+                    if ((magnetTarget - pulled).sqrMagnitude <= 0.85f)
+                    {
+                        reachedPlayerByMagnet = true;
+                    }
+                    return false;
+                }
+            }
+
             bobPhase += 3.6f * deltaTime;
 
             float bobY = Mathf.Sin(bobPhase) * 0.11f;

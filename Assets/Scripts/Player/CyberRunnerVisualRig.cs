@@ -29,6 +29,11 @@ namespace CyberRunner.Player
         private Transform leftLegPivot;
         private Transform rightLegPivot;
 
+        private readonly System.Collections.Generic.List<MeshRenderer> suitRenderers = new System.Collections.Generic.List<MeshRenderer>(12);
+        private readonly System.Collections.Generic.List<MeshRenderer> primaryNeonRenderers = new System.Collections.Generic.List<MeshRenderer>(10);
+        private readonly System.Collections.Generic.List<MeshRenderer> secondaryAccentRenderers = new System.Collections.Generic.List<MeshRenderer>(6);
+        private MaterialPropertyBlock skinBlock;
+
         private float runCyclePhase;
         private float landingSquashTimer;
         private float stumbleFlashTimer;
@@ -46,6 +51,37 @@ namespace CyberRunner.Player
             suitDarkMaterial = suitDark;
             neonCyanMaterial = neonCyan;
             neonPurpleMaterial = neonPurple;
+        }
+
+        /// <summary>
+        /// Applies a cosmetic character skin palette via zero-GC MaterialPropertyBlocks (no runtime material clones).
+        /// </summary>
+        public void ApplySkin(Color suitColor, Color primaryNeonColor, Color secondaryAccentColor)
+        {
+            BuildRigIfNeeded();
+            if (skinBlock == null)
+            {
+                skinBlock = new MaterialPropertyBlock();
+            }
+
+            ApplyColorToGroup(suitRenderers, suitColor);
+            ApplyColorToGroup(primaryNeonRenderers, primaryNeonColor);
+            ApplyColorToGroup(secondaryAccentRenderers, secondaryAccentColor);
+        }
+
+        private void ApplyColorToGroup(System.Collections.Generic.List<MeshRenderer> renderers, Color color)
+        {
+            skinBlock.Clear();
+            skinBlock.SetColor("_BaseColor", color);
+            skinBlock.SetColor("_Color", color);
+
+            for (int i = 0; i < renderers.Count; i++)
+            {
+                if (renderers[i] != null)
+                {
+                    renderers[i].SetPropertyBlock(skinBlock);
+                }
+            }
         }
 
         public void TriggerLandingImpact()
@@ -267,39 +303,42 @@ namespace CyberRunner.Player
             }
 
             visualRoot = CreatePivot("VisualRoot", transform, Vector3.zero);
+            suitRenderers.Clear();
+            primaryNeonRenderers.Clear();
+            secondaryAccentRenderers.Clear();
 
-            CreatePart("Pelvis", PrimitiveType.Cube, visualRoot, new Vector3(0f, 0.92f, 0f), new Vector3(0.40f, 0.20f, 0.26f), suitDarkMaterial);
-            CreatePart("BeltGlow", PrimitiveType.Cube, visualRoot, new Vector3(0f, 0.96f, 0f), new Vector3(0.43f, 0.05f, 0.29f), neonPurpleMaterial);
+            CreatePart("Pelvis", PrimitiveType.Cube, visualRoot, new Vector3(0f, 0.92f, 0f), new Vector3(0.40f, 0.20f, 0.26f), suitDarkMaterial, suitRenderers);
+            CreatePart("BeltGlow", PrimitiveType.Cube, visualRoot, new Vector3(0f, 0.96f, 0f), new Vector3(0.43f, 0.05f, 0.29f), neonPurpleMaterial, secondaryAccentRenderers);
 
             torsoPivot = CreatePivot("TorsoPivot", visualRoot, new Vector3(0f, 1.00f, 0f));
-            CreatePart("ChestArmor", PrimitiveType.Cube, torsoPivot, new Vector3(0f, 0.28f, 0f), new Vector3(0.48f, 0.54f, 0.28f), suitDarkMaterial);
-            CreatePart("SpineStrip", PrimitiveType.Cube, torsoPivot, new Vector3(0f, 0.28f, -0.145f), new Vector3(0.08f, 0.44f, 0.03f), neonCyanMaterial);
-            CreatePart("ChestCore", PrimitiveType.Cube, torsoPivot, new Vector3(0f, 0.34f, 0.145f), new Vector3(0.24f, 0.10f, 0.03f), neonCyanMaterial);
-            CreatePart("LeftShoulderPad", PrimitiveType.Cube, torsoPivot, new Vector3(-0.30f, 0.48f, 0f), new Vector3(0.16f, 0.14f, 0.24f), neonPurpleMaterial);
-            CreatePart("RightShoulderPad", PrimitiveType.Cube, torsoPivot, new Vector3(0.30f, 0.48f, 0f), new Vector3(0.16f, 0.14f, 0.24f), neonPurpleMaterial);
+            CreatePart("ChestArmor", PrimitiveType.Cube, torsoPivot, new Vector3(0f, 0.28f, 0f), new Vector3(0.48f, 0.54f, 0.28f), suitDarkMaterial, suitRenderers);
+            CreatePart("SpineStrip", PrimitiveType.Cube, torsoPivot, new Vector3(0f, 0.28f, -0.145f), new Vector3(0.08f, 0.44f, 0.03f), neonCyanMaterial, primaryNeonRenderers);
+            CreatePart("ChestCore", PrimitiveType.Cube, torsoPivot, new Vector3(0f, 0.34f, 0.145f), new Vector3(0.24f, 0.10f, 0.03f), neonCyanMaterial, primaryNeonRenderers);
+            CreatePart("LeftShoulderPad", PrimitiveType.Cube, torsoPivot, new Vector3(-0.30f, 0.48f, 0f), new Vector3(0.16f, 0.14f, 0.24f), neonPurpleMaterial, secondaryAccentRenderers);
+            CreatePart("RightShoulderPad", PrimitiveType.Cube, torsoPivot, new Vector3(0.30f, 0.48f, 0f), new Vector3(0.16f, 0.14f, 0.24f), neonPurpleMaterial, secondaryAccentRenderers);
 
             headPivot = CreatePivot("HeadPivot", torsoPivot, new Vector3(0f, 0.58f, 0f));
-            CreatePart("Helmet", PrimitiveType.Sphere, headPivot, new Vector3(0f, 0.17f, 0f), new Vector3(0.34f, 0.36f, 0.36f), suitDarkMaterial);
-            CreatePart("VisorGlow", PrimitiveType.Cube, headPivot, new Vector3(0f, 0.18f, 0.15f), new Vector3(0.26f, 0.09f, 0.09f), neonCyanMaterial);
-            CreatePart("HelmetCrest", PrimitiveType.Cube, headPivot, new Vector3(0f, 0.32f, -0.02f), new Vector3(0.06f, 0.07f, 0.28f), neonCyanMaterial);
+            CreatePart("Helmet", PrimitiveType.Sphere, headPivot, new Vector3(0f, 0.17f, 0f), new Vector3(0.34f, 0.36f, 0.36f), suitDarkMaterial, suitRenderers);
+            CreatePart("VisorGlow", PrimitiveType.Cube, headPivot, new Vector3(0f, 0.18f, 0.15f), new Vector3(0.26f, 0.09f, 0.09f), neonCyanMaterial, primaryNeonRenderers);
+            CreatePart("HelmetCrest", PrimitiveType.Cube, headPivot, new Vector3(0f, 0.32f, -0.02f), new Vector3(0.06f, 0.07f, 0.28f), neonCyanMaterial, primaryNeonRenderers);
 
             leftArmPivot = CreatePivot("LeftArmPivot", torsoPivot, new Vector3(-0.32f, 0.46f, 0f));
-            CreatePart("LeftArmMesh", PrimitiveType.Capsule, leftArmPivot, new Vector3(0f, -0.26f, 0f), new Vector3(0.13f, 0.29f, 0.13f), suitDarkMaterial);
-            CreatePart("LeftForearmGlow", PrimitiveType.Cube, leftArmPivot, new Vector3(-0.05f, -0.36f, 0.02f), new Vector3(0.05f, 0.20f, 0.06f), neonCyanMaterial);
+            CreatePart("LeftArmMesh", PrimitiveType.Capsule, leftArmPivot, new Vector3(0f, -0.26f, 0f), new Vector3(0.13f, 0.29f, 0.13f), suitDarkMaterial, suitRenderers);
+            CreatePart("LeftForearmGlow", PrimitiveType.Cube, leftArmPivot, new Vector3(-0.05f, -0.36f, 0.02f), new Vector3(0.05f, 0.20f, 0.06f), neonCyanMaterial, primaryNeonRenderers);
 
             rightArmPivot = CreatePivot("RightArmPivot", torsoPivot, new Vector3(0.32f, 0.46f, 0f));
-            CreatePart("RightArmMesh", PrimitiveType.Capsule, rightArmPivot, new Vector3(0f, -0.26f, 0f), new Vector3(0.13f, 0.29f, 0.13f), suitDarkMaterial);
-            CreatePart("RightForearmGlow", PrimitiveType.Cube, rightArmPivot, new Vector3(0.05f, -0.36f, 0.02f), new Vector3(0.05f, 0.20f, 0.06f), neonCyanMaterial);
+            CreatePart("RightArmMesh", PrimitiveType.Capsule, rightArmPivot, new Vector3(0f, -0.26f, 0f), new Vector3(0.13f, 0.29f, 0.13f), suitDarkMaterial, suitRenderers);
+            CreatePart("RightForearmGlow", PrimitiveType.Cube, rightArmPivot, new Vector3(0.05f, -0.36f, 0.02f), new Vector3(0.05f, 0.20f, 0.06f), neonCyanMaterial, primaryNeonRenderers);
 
             leftLegPivot = CreatePivot("LeftLegPivot", visualRoot, new Vector3(-0.13f, 0.86f, 0f));
-            CreatePart("LeftLegMesh", PrimitiveType.Capsule, leftLegPivot, new Vector3(0f, -0.38f, 0f), new Vector3(0.16f, 0.40f, 0.16f), suitDarkMaterial);
-            CreatePart("LeftShoe", PrimitiveType.Cube, leftLegPivot, new Vector3(0f, -0.78f, 0.06f), new Vector3(0.17f, 0.12f, 0.32f), suitDarkMaterial);
-            CreatePart("LeftShoeSole", PrimitiveType.Cube, leftLegPivot, new Vector3(0f, -0.84f, 0.06f), new Vector3(0.18f, 0.04f, 0.34f), neonCyanMaterial);
+            CreatePart("LeftLegMesh", PrimitiveType.Capsule, leftLegPivot, new Vector3(0f, -0.38f, 0f), new Vector3(0.16f, 0.40f, 0.16f), suitDarkMaterial, suitRenderers);
+            CreatePart("LeftShoe", PrimitiveType.Cube, leftLegPivot, new Vector3(0f, -0.78f, 0.06f), new Vector3(0.17f, 0.12f, 0.32f), suitDarkMaterial, suitRenderers);
+            CreatePart("LeftShoeSole", PrimitiveType.Cube, leftLegPivot, new Vector3(0f, -0.84f, 0.06f), new Vector3(0.18f, 0.04f, 0.34f), neonCyanMaterial, primaryNeonRenderers);
 
             rightLegPivot = CreatePivot("RightLegPivot", visualRoot, new Vector3(0.13f, 0.86f, 0f));
-            CreatePart("RightLegMesh", PrimitiveType.Capsule, rightLegPivot, new Vector3(0f, -0.38f, 0f), new Vector3(0.16f, 0.40f, 0.16f), suitDarkMaterial);
-            CreatePart("RightShoe", PrimitiveType.Cube, rightLegPivot, new Vector3(0f, -0.78f, 0.06f), new Vector3(0.17f, 0.12f, 0.32f), suitDarkMaterial);
-            CreatePart("RightShoeSole", PrimitiveType.Cube, rightLegPivot, new Vector3(0f, -0.84f, 0.06f), new Vector3(0.18f, 0.04f, 0.34f), neonCyanMaterial);
+            CreatePart("RightLegMesh", PrimitiveType.Capsule, rightLegPivot, new Vector3(0f, -0.38f, 0f), new Vector3(0.16f, 0.40f, 0.16f), suitDarkMaterial, suitRenderers);
+            CreatePart("RightShoe", PrimitiveType.Cube, rightLegPivot, new Vector3(0f, -0.78f, 0.06f), new Vector3(0.17f, 0.12f, 0.32f), suitDarkMaterial, suitRenderers);
+            CreatePart("RightShoeSole", PrimitiveType.Cube, rightLegPivot, new Vector3(0f, -0.84f, 0.06f), new Vector3(0.18f, 0.04f, 0.34f), neonCyanMaterial, primaryNeonRenderers);
 
             rigBuilt = true;
         }
@@ -320,7 +359,8 @@ namespace CyberRunner.Player
             Transform parent,
             Vector3 localPos,
             Vector3 localScale,
-            Material material)
+            Material material,
+            System.Collections.Generic.List<MeshRenderer> targetGroup)
         {
             GameObject part = GameObject.CreatePrimitive(primitiveType);
             part.name = name;
@@ -338,11 +378,15 @@ namespace CyberRunner.Player
             tr.localScale = localScale;
 
             MeshRenderer renderer = part.GetComponent<MeshRenderer>();
-            if (renderer != null && material != null)
+            if (renderer != null)
             {
-                renderer.sharedMaterial = material;
+                if (material != null)
+                {
+                    renderer.sharedMaterial = material;
+                }
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 renderer.receiveShadows = false;
+                targetGroup?.Add(renderer);
             }
         }
     }

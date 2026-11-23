@@ -13,6 +13,8 @@ using CyberRunner.Environment;
 using CyberRunner.Gameplay;
 using CyberRunner.Obstacles;
 using CyberRunner.Player;
+using CyberRunner.PowerUps;
+using CyberRunner.Progression;
 using CyberRunner.UI;
 
 #if ENABLE_INPUT_SYSTEM
@@ -22,8 +24,8 @@ using UnityEngine.InputSystem.UI;
 namespace CyberRunner.Editor
 {
     /// <summary>
-    /// Programmatically generates and verifies all URP mobile assets, GPU-instanced materials,
-    /// GameConfig asset, Bootstrap.unity, and Gameplay.unity scenes (Phase 1 + Phase 2 Core Gameplay).
+    /// Programmatically generates and verifies all URP mobile assets, GPU-instanced materials
+    /// for all 5 futuristic environments, GameConfig, Bootstrap.unity, and Gameplay.unity.
     /// Guarantees 100% valid Unity 6000.0 serialization in headless GitHub Actions CI builds.
     /// </summary>
     public static class Phase1AssetAndSceneBuilder
@@ -38,17 +40,12 @@ namespace CyberRunner.Editor
         private struct SharedMaterials
         {
             public Material SuitDark;
-            public Material NeonCyan;
-            public Material NeonPurple;
-            public Material RoadDark;
-            public Material BuildingDark;
             public Material TrainBody;
-            public Material HazardRed;
-            public Material HazardAmber;
             public Material CoinGold;
+            public BiomeMaterialPalette BiomePalette;
         }
 
-        [MenuItem("CyberRunner/Rebuild All Scenes & URP Assets (Phase 2)")]
+        [MenuItem("CyberRunner/Rebuild All Scenes & URP Assets (v1.0.0)")]
         public static void BuildAllPhase1AssetsAndScenes()
         {
             EnsureFoldersExist();
@@ -62,7 +59,7 @@ namespace CyberRunner.Editor
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("[CyberRunner] Phase 2 URP pipeline, materials, GameConfig, and Core Gameplay scenes generated successfully.");
+            Debug.Log("[CyberRunner] v1.0.0 Final URP pipeline, branding, 5 biomes, 6 power-ups, progression, audio, optimization & scenes generated successfully.");
         }
 
         private static void EnsureFoldersExist()
@@ -106,13 +103,13 @@ namespace CyberRunner.Editor
                 AssetDatabase.CreateAsset(urpAsset, UrpAssetPath);
             }
 
-            // Mobile-first URP defaults tuned for 2GB-3GB Android devices.
             urpAsset.supportsHDR = false;
-            urpAsset.msaaSampleCount = 2;
+            urpAsset.msaaSampleCount = 1;
             urpAsset.renderScale = 0.85f;
-            urpAsset.shadowDistance = 28f;
+            urpAsset.shadowDistance = 0f;
             urpAsset.supportsCameraDepthTexture = false;
             urpAsset.supportsCameraOpaqueTexture = false;
+            urpAsset.useSRPBatcher = true;
             EditorUtility.SetDirty(urpAsset);
             EditorUtility.SetDirty(rendererData);
 
@@ -150,61 +147,31 @@ namespace CyberRunner.Editor
             Shader simpleLit = Shader.Find("Universal Render Pipeline/Simple Lit") ?? Shader.Find("Standard");
             Shader unlit = Shader.Find("Universal Render Pipeline/Unlit") ?? simpleLit;
 
+            var palette = new BiomeMaterialPalette
+            {
+                RoadNeonCity = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberRoad_Dark.mat", simpleLit, new Color(0.045f, 0.06f, 0.11f, 1f), true),
+                RoadUnderground = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberRoad_Underground.mat", simpleLit, new Color(0.07f, 0.05f, 0.06f, 1f), true),
+                RoadSkyHighway = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberRoad_Sky.mat", simpleLit, new Color(0.07f, 0.12f, 0.22f, 1f), true),
+                RoadIndustrial = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberRoad_Industrial.mat", simpleLit, new Color(0.11f, 0.09f, 0.07f, 1f), true),
+                RoadDigitalCore = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberRoad_Digital.mat", simpleLit, new Color(0.03f, 0.07f, 0.12f, 1f), true),
+
+                BuildingDark = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberBuilding_Dark.mat", simpleLit, new Color(0.03f, 0.04f, 0.085f, 1f), true),
+                SteelIndustrial = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberSteel_Industrial.mat", simpleLit, new Color(0.14f, 0.15f, 0.18f, 1f), true),
+
+                NeonCyan = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberNeon_Cyan.mat", unlit, new Color(0.0f, 0.94f, 1.0f, 1f), true),
+                NeonPurple = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberNeon_Purple.mat", unlit, new Color(0.68f, 0.22f, 1.0f, 1f), true),
+                NeonMagenta = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberNeon_Magenta.mat", unlit, new Color(0.96f, 0.18f, 0.92f, 1f), true),
+                NeonGreen = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberNeon_Green.mat", unlit, new Color(0.16f, 0.96f, 0.45f, 1f), true),
+                HazardRed = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberHazard_Red.mat", unlit, new Color(1.0f, 0.14f, 0.28f, 1f), true),
+                HazardAmber = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberHazard_Amber.mat", unlit, new Color(1.0f, 0.62f, 0.08f, 1f), true)
+            };
+
             return new SharedMaterials
             {
-                SuitDark = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberSuit_Dark.mat",
-                    simpleLit,
-                    new Color(0.08f, 0.10f, 0.15f, 1f),
-                    enableGpuInstancing: true),
-
-                RoadDark = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberRoad_Dark.mat",
-                    simpleLit,
-                    new Color(0.045f, 0.06f, 0.11f, 1f),
-                    enableGpuInstancing: true),
-
-                BuildingDark = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberBuilding_Dark.mat",
-                    simpleLit,
-                    new Color(0.03f, 0.04f, 0.085f, 1f),
-                    enableGpuInstancing: true),
-
-                TrainBody = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberTrain_Body.mat",
-                    simpleLit,
-                    new Color(0.11f, 0.14f, 0.22f, 1f),
-                    enableGpuInstancing: true),
-
-                NeonCyan = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberNeon_Cyan.mat",
-                    unlit,
-                    new Color(0.0f, 0.94f, 1.0f, 1f),
-                    enableGpuInstancing: true),
-
-                NeonPurple = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberNeon_Purple.mat",
-                    unlit,
-                    new Color(0.68f, 0.22f, 1.0f, 1f),
-                    enableGpuInstancing: true),
-
-                HazardRed = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberHazard_Red.mat",
-                    unlit,
-                    new Color(1.0f, 0.14f, 0.28f, 1f),
-                    enableGpuInstancing: true),
-
-                HazardAmber = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberHazard_Amber.mat",
-                    unlit,
-                    new Color(1.0f, 0.62f, 0.08f, 1f),
-                    enableGpuInstancing: true),
-
-                CoinGold = CreateOrUpdateMaterial(
-                    $"{MaterialsResourceFolder}/CyberCoin_Gold.mat",
-                    unlit,
-                    new Color(1.0f, 0.84f, 0.14f, 1f),
-                    enableGpuInstancing: true)
+                SuitDark = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberSuit_Dark.mat", simpleLit, new Color(0.08f, 0.10f, 0.15f, 1f), true),
+                TrainBody = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberTrain_Body.mat", simpleLit, new Color(0.11f, 0.14f, 0.22f, 1f), true),
+                CoinGold = CreateOrUpdateMaterial($"{MaterialsResourceFolder}/CyberCoin_Gold.mat", unlit, new Color(1.0f, 0.84f, 0.14f, 1f), true),
+                BiomePalette = palette
             };
         }
 
@@ -259,27 +226,27 @@ namespace CyberRunner.Editor
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-            // Cyberpunk night atmosphere: deep navy fog and ambient lighting.
+            BiomeProfile defaultProfile = BiomeCatalog.GetProfile(BiomeType.NeonCity);
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.10f, 0.16f, 0.30f, 1f);
-            RenderSettings.ambientEquatorColor = new Color(0.06f, 0.09f, 0.18f, 1f);
-            RenderSettings.ambientGroundColor = new Color(0.03f, 0.03f, 0.07f, 1f);
+            RenderSettings.ambientSkyColor = defaultProfile.AmbientSky;
+            RenderSettings.ambientEquatorColor = defaultProfile.AmbientEquator;
+            RenderSettings.ambientGroundColor = defaultProfile.AmbientGround;
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.Linear;
-            RenderSettings.fogColor = new Color(0.03f, 0.05f, 0.11f, 1f);
-            RenderSettings.fogStartDistance = 32f;
-            RenderSettings.fogEndDistance = 135f;
+            RenderSettings.fogColor = defaultProfile.FogColor;
+            RenderSettings.fogStartDistance = defaultProfile.FogStart;
+            RenderSettings.fogEndDistance = defaultProfile.FogEnd;
 
             // Directional neon-tinted key light (shadows disabled for low-end mobile performance).
             var lightObj = new GameObject("CyberKeyLight");
             Light keyLight = lightObj.AddComponent<Light>();
             keyLight.type = LightType.Directional;
-            keyLight.color = new Color(0.75f, 0.90f, 1.0f, 1f);
-            keyLight.intensity = 1.25f;
+            keyLight.color = defaultProfile.KeyLightColor;
+            keyLight.intensity = defaultProfile.KeyLightIntensity;
             keyLight.shadows = LightShadows.None;
             lightObj.transform.rotation = Quaternion.Euler(46f, -26f, 0f);
 
-            // EventSystem for UI interaction.
+            // EventSystem
             var eventSystemObj = new GameObject("EventSystem");
             eventSystemObj.AddComponent<EventSystem>();
 #if ENABLE_INPUT_SYSTEM
@@ -297,7 +264,17 @@ namespace CyberRunner.Editor
             inputController.SetConfig(config);
 
             CyberRunnerVisualRig visualRig = playerObj.AddComponent<CyberRunnerVisualRig>();
-            visualRig.SetMaterials(mats.SuitDark, mats.NeonCyan, mats.NeonPurple);
+            visualRig.SetMaterials(mats.SuitDark, mats.BiomePalette.NeonCyan, mats.BiomePalette.NeonPurple);
+
+            PlayerPowerUpVisuals powerUpVisuals = playerObj.AddComponent<PlayerPowerUpVisuals>();
+            powerUpVisuals.ConfigureMaterials(
+                mats.SuitDark,
+                mats.BiomePalette.NeonCyan,
+                mats.BiomePalette.NeonPurple,
+                mats.BiomePalette.NeonMagenta,
+                mats.BiomePalette.NeonGreen,
+                mats.CoinGold,
+                mats.BiomePalette.HazardAmber);
 
             PlayerController playerController = playerObj.AddComponent<PlayerController>();
             playerController.Configure(config, inputController, visualRig);
@@ -307,9 +284,9 @@ namespace CyberRunner.Editor
             cameraObj.tag = "MainCamera";
             Camera mainCam = cameraObj.AddComponent<Camera>();
             mainCam.clearFlags = CameraClearFlags.SolidColor;
-            mainCam.backgroundColor = new Color(0.02f, 0.035f, 0.085f, 1f);
+            mainCam.backgroundColor = defaultProfile.CameraSkyColor;
             mainCam.nearClipPlane = 0.25f;
-            mainCam.farClipPlane = 155f;
+            mainCam.farClipPlane = 160f;
             mainCam.fieldOfView = config.baseCameraFov;
             cameraObj.AddComponent<AudioListener>();
             cameraObj.AddComponent<UniversalAdditionalCameraData>();
@@ -317,44 +294,84 @@ namespace CyberRunner.Editor
             CyberCameraController cameraController = cameraObj.AddComponent<CyberCameraController>();
             cameraController.SetTarget(playerObj.transform, playerController, config);
 
-            // Pooled Obstacles Manager
+            // Dynamic 5-Biome Atmosphere Controller
+            var atmosphereObj = new GameObject("BiomeAtmosphereController");
+            BiomeAtmosphereController atmosphereController = atmosphereObj.AddComponent<BiomeAtmosphereController>();
+            atmosphereController.Configure(mainCam, keyLight);
+
+            // Pooled Obstacles Manager (7 cyberpunk obstacle categories)
             var obstaclePoolObj = new GameObject("ObstaclePoolManager");
             ObstaclePoolManager obstaclePool = obstaclePoolObj.AddComponent<ObstaclePoolManager>();
             obstaclePool.ConfigureMaterials(
-                mats.BuildingDark,
+                mats.BiomePalette.BuildingDark,
                 mats.TrainBody,
-                mats.NeonCyan,
-                mats.NeonPurple,
-                mats.HazardRed,
-                mats.HazardAmber);
+                mats.BiomePalette.NeonCyan,
+                mats.BiomePalette.NeonPurple,
+                mats.BiomePalette.HazardRed,
+                mats.BiomePalette.HazardAmber,
+                mats.BiomePalette.NeonMagenta);
 
             // Pooled Energy Coins Manager
             var coinPoolObj = new GameObject("CoinPoolManager");
             CoinPoolManager coinPool = coinPoolObj.AddComponent<CoinPoolManager>();
-            coinPool.ConfigureMaterials(mats.CoinGold, mats.NeonCyan);
+            coinPool.ConfigureMaterials(mats.CoinGold, mats.BiomePalette.NeonCyan);
 
-            // Pooled Modular Endless Track Manager
+            // Pooled Power-Up Pickups Manager (6 power-ups)
+            var powerUpPoolObj = new GameObject("PowerUpPoolManager");
+            PowerUpPoolManager powerUpPool = powerUpPoolObj.AddComponent<PowerUpPoolManager>();
+            powerUpPool.ConfigureMaterials(
+                mats.BiomePalette.NeonCyan,
+                mats.BiomePalette.NeonPurple,
+                mats.BiomePalette.NeonMagenta,
+                mats.BiomePalette.NeonGreen,
+                mats.CoinGold,
+                mats.BiomePalette.HazardAmber);
+
+            // Power-Up Runtime Controller
+            var powerUpManagerObj = new GameObject("PowerUpManager");
+            PowerUpManager powerUpManager = powerUpManagerObj.AddComponent<PowerUpManager>();
+            powerUpManager.Configure(powerUpVisuals, obstaclePool);
+
+            // Balanced Difficulty Progression & Score Systems
+            var difficultyObj = new GameObject("DifficultyManager");
+            DifficultyManager difficultyManager = difficultyObj.AddComponent<DifficultyManager>();
+            difficultyManager.Configure(config);
+
+            var scoreObj = new GameObject("ScoreManager");
+            ScoreManager scoreManager = scoreObj.AddComponent<ScoreManager>();
+
+            // Phase 5 Progression Controller (Skins, Power-Up Upgrades, Missions, Achievements, Daily Rewards, Offline Save)
+            var progressionObj = new GameObject("ProgressionManager");
+            ProgressionManager progressionManager = progressionObj.AddComponent<ProgressionManager>();
+            progressionManager.Configure(visualRig, powerUpManager, coinPool);
+
+            // Pooled 5-Biome Endless Track Manager
             var trackObj = new GameObject("EndlessTrackManager");
             EndlessTrackManager trackManager = trackObj.AddComponent<EndlessTrackManager>();
-            trackManager.Configure(
-                config,
-                playerObj.transform,
-                obstaclePool,
-                coinPool,
-                mats.RoadDark,
-                mats.NeonCyan,
-                mats.NeonPurple,
-                mats.BuildingDark);
+            trackManager.Configure(config, playerObj.transform, obstaclePool, coinPool, mats.BiomePalette, powerUpPool);
 
-            // Phase 2 Core Run Orchestrator
+            // Core Run Orchestrator
             var runManagerObj = new GameObject("CoreRunManager");
             CoreRunManager runManager = runManagerObj.AddComponent<CoreRunManager>();
-            runManager.Configure(config, playerController, cameraController, trackManager, obstaclePool, coinPool);
+            runManager.Configure(
+                config,
+                playerController,
+                inputController,
+                cameraController,
+                trackManager,
+                atmosphereController,
+                obstaclePool,
+                coinPool,
+                powerUpPool,
+                powerUpManager,
+                difficultyManager,
+                scoreManager,
+                progressionManager);
 
-            // Phase 2 Gameplay HUD + Instant Restart Overlay
+            // Phase 5 Gameplay HUD + Power-Up Timers, Ability Button, Pause, Game Over & Cyber Hub Progression Overlay
             var hudObj = new GameObject("Phase2GameplayHud");
             Phase2GameplayHud hud = hudObj.AddComponent<Phase2GameplayHud>();
-            hud.Configure(runManager, playerController, coinPool);
+            hud.Configure(runManager, playerController, coinPool, powerUpManager, scoreManager, difficultyManager, progressionManager);
 
             EditorSceneManager.SaveScene(scene, GameplayScenePath);
         }

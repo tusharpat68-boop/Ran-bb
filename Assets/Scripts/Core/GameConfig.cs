@@ -103,6 +103,15 @@ namespace CyberRunner.Core
         [Range(1, 3)]
         public int safeIntroSegments = 2;
 
+        [Header("Multi-Biome Environments (Phase 3)")]
+        [Tooltip("Distance in meters before advancing to the next futuristic sector in Endless Mode.")]
+        [Min(80f)]
+        public float biomeTransitionIntervalMeters = 200f;
+
+        [Tooltip("Probability of spawning a fair jumpable Road Gap on Sky Highway segments.")]
+        [Range(0f, 0.8f)]
+        public float skyHighwayGapChance = 0.45f;
+
         [Header("Camera Configuration")]
         [Tooltip("Default local offset behind and above the runner.")]
         public Vector3 cameraOffset = new Vector3(0f, 4.4f, -7.2f);

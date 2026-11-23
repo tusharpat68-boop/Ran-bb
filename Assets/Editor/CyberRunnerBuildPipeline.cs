@@ -20,7 +20,7 @@ namespace CyberRunner.Editor
         public const string ProductName = "CYBER RUNNER";
         public const string CompanyName = "CyberRunnerStudio";
 
-        [MenuItem("CyberRunner/Build/Build Android APK (Phase 1)")]
+        [MenuItem("CyberRunner/Build/Build Android APK (v1.0.0)")]
         public static void BuildAndroidMenu()
         {
             BuildAndroid();
@@ -32,18 +32,33 @@ namespace CyberRunner.Editor
         /// </summary>
         public static void BuildAndroid()
         {
+            if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android)
+            {
+                EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android);
+            }
+
             string[] args = Environment.GetCommandLineArgs();
             string buildPath = GetArgValue(args, "-customBuildPath") ?? "build/Android/CyberRunner.apk";
             string exportType = GetArgValue(args, "-androidExportType") ?? "androidPackage";
-            string versionName = GetArgValue(args, "-buildVersion") ?? "0.1.0";
+            string versionName = GetArgValue(args, "-buildVersion") ?? "1.0.0";
             string versionCodeRaw = GetArgValue(args, "-androidVersionCode") ?? Environment.GetEnvironmentVariable("ANDROID_VERSION_CODE") ?? "1";
             bool includeArmV7 = string.Equals(
                 GetArgValue(args, "-includeArmV7") ?? Environment.GetEnvironmentVariable("CYBER_RUNNER_INCLUDE_ARMV7"),
                 "true",
                 StringComparison.OrdinalIgnoreCase);
+            bool requireSigning = string.Equals(
+                GetArgValue(args, "-requireSigning") ?? Environment.GetEnvironmentVariable("CYBER_RUNNER_REQUIRE_SIGNING"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
 
             bool buildAppBundle = string.Equals(exportType, "androidAppBundle", StringComparison.OrdinalIgnoreCase)
                 || buildPath.EndsWith(".aab", StringComparison.OrdinalIgnoreCase);
+
+            string expectedExt = buildAppBundle ? ".aab" : ".apk";
+            if (!buildPath.EndsWith(expectedExt, StringComparison.OrdinalIgnoreCase))
+            {
+                buildPath = Path.ChangeExtension(buildPath, expectedExt);
+            }
 
             if (!int.TryParse(versionCodeRaw, out int versionCode) || versionCode < 1)
             {
@@ -52,7 +67,9 @@ namespace CyberRunner.Editor
 
             ConfigureAndroidPlayerSettings(versionName, versionCode, buildAppBundle, includeArmV7);
             ConfigureOptionalKeystore(args);
+            CyberRunnerBrandingGenerator.GenerateAndAssignBranding();
             Phase1AssetAndSceneBuilder.BuildAllPhase1AssetsAndScenes();
+            CyberRunnerReleaseValidator.ValidateOrThrow(buildAppBundle, requireSigning);
 
             string outputDirectory = Path.GetDirectoryName(buildPath);
             if (!string.IsNullOrEmpty(outputDirectory) && !Directory.Exists(outputDirectory))
@@ -128,9 +145,13 @@ namespace CyberRunner.Editor
                 BuildTarget.Android,
                 new[] { GraphicsDeviceType.OpenGLES3, GraphicsDeviceType.Vulkan });
 
-            // APK size & memory optimization.
+            // APK size, incremental GC & low-end 2GB-3GB Android RAM optimization.
             PlayerSettings.stripEngineCode = true;
+            PlayerSettings.gcIncremental = true;
+            PlayerSettings.bakeCollisionMeshes = true;
             PlayerSettings.SetManagedStrippingLevel(NamedBuildTarget.Android, ManagedStrippingLevel.Low);
+            PlayerSettings.SetIl2CppCompilerConfiguration(NamedBuildTarget.Android, Il2CppCompilerConfiguration.Release);
+            PlayerSettings.SetIl2CppCodeGeneration(NamedBuildTarget.Android, Il2CppCodeGeneration.OptimizeSize);
             PlayerSettings.Android.bundleVersionCode = versionCode;
             PlayerSettings.Android.splitApplicationBinary = false;
             PlayerSettings.Android.optimizedFramePacing = true;
@@ -168,10 +189,20 @@ namespace CyberRunner.Editor
             string keyaliasName = (GetArgValue(args, "-androidKeyaliasName") ?? Environment.GetEnvironmentVariable("ANDROID_KEYALIAS_NAME"))?.Trim('"');
             string keyaliasPass = (GetArgValue(args, "-androidKeyaliasPass") ?? Environment.GetEnvironmentVariable("ANDROID_KEYALIAS_PASS"))?.Trim('"');
 
-            if (!string.IsNullOrEmpty(keystoreName) && File.Exists(keystoreName))
+            string resolvedKeystore = keystoreName;
+            if (!string.IsNullOrEmpty(keystoreName) && !File.Exists(resolvedKeystore))
+            {
+                string projectRootPath = Path.Combine(Directory.GetCurrentDirectory(), keystoreName);
+                if (File.Exists(projectRootPath))
+                {
+                    resolvedKeystore = projectRootPath;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(resolvedKeystore) && File.Exists(resolvedKeystore))
             {
                 PlayerSettings.Android.useCustomKeystore = true;
-                PlayerSettings.Android.keystoreName = keystoreName;
+                PlayerSettings.Android.keystoreName = resolvedKeystore;
                 PlayerSettings.Android.keystorePass = keystorePass ?? string.Empty;
                 PlayerSettings.Android.keyaliasName = keyaliasName ?? string.Empty;
                 PlayerSettings.Android.keyaliasPass = keyaliasPass ?? string.Empty;
@@ -186,11 +217,18 @@ namespace CyberRunner.Editor
 
         private static string GetArgValue(string[] args, string flagName)
         {
-            for (int i = 0; i < args.Length - 1; i++)
+            // Scan from the end so explicit overrides win and ignore empty flags followed by another -flag.
+            for (int i = args.Length - 2; i >= 0; i--)
             {
                 if (string.Equals(args[i], flagName, StringComparison.OrdinalIgnoreCase))
                 {
-                    return args[i + 1];
+                    string candidate = args[i + 1];
+                    if (string.IsNullOrWhiteSpace(candidate) || candidate.StartsWith("-", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    return candidate;
                 }
             }
 

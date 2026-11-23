@@ -57,6 +57,12 @@ namespace CyberRunner.Collectibles
             OnCoinCountChanged?.Invoke(RunCoins, TotalCoins);
         }
 
+        public void SyncTotalCoinsFromSave(int savedBalance)
+        {
+            TotalCoins = Mathf.Max(0, savedBalance);
+            OnCoinCountChanged?.Invoke(RunCoins, TotalCoins);
+        }
+
         public void SaveTotalCoins()
         {
             PlayerPrefs.SetInt(TotalCoinsPrefsKey, Mathf.Max(0, TotalCoins));
@@ -135,14 +141,40 @@ namespace CyberRunner.Collectibles
         }
 
         /// <summary>
-        /// Ticks all active coins in one centralized loop and recycles collected or passed coins.
+        /// Awards validated bonus Energy Coins (e.g. run milestone or mission rewards).
         /// </summary>
-        public void TickActive(float deltaTime, Vector3 playerPosition)
+        public void GrantBonusCoins(int bonusAmount)
         {
+            if (bonusAmount <= 0)
+            {
+                return;
+            }
+
+            TotalCoins += bonusAmount;
+            OnCoinCountChanged?.Invoke(RunCoins, TotalCoins);
+        }
+
+        /// <summary>
+        /// Ticks all active coins in one centralized loop (including Energy Magnet attraction)
+        /// and recycles collected or passed coins.
+        /// </summary>
+        public void TickActive(
+            float deltaTime,
+            Vector3 playerPosition,
+            bool magnetActive = false,
+            float magnetRadius = 12.5f,
+            Action<EnergyCoin> onMagnetCollected = null)
+        {
+            float radiusSq = magnetRadius * magnetRadius;
             for (int i = activeCoins.Count - 1; i >= 0; i--)
             {
                 EnergyCoin coin = activeCoins[i];
-                bool animDone = coin.Tick(deltaTime, playerPosition);
+                bool animDone = coin.Tick(deltaTime, playerPosition, magnetActive, radiusSq, out bool reachedByMagnet);
+
+                if (reachedByMagnet && !coin.IsCollected)
+                {
+                    onMagnetCollected?.Invoke(coin);
+                }
 
                 if (animDone || (!coin.IsCollected && coin.transform.position.z < playerPosition.z - 10f))
                 {

@@ -1,15 +1,17 @@
+using System;
 using UnityEngine;
 using CyberRunner.Collectibles;
 using CyberRunner.Core;
 using CyberRunner.Obstacles;
+using CyberRunner.PowerUps;
 
 namespace CyberRunner.Environment
 {
     /// <summary>
-    /// Phase 2 modular pooled endless highway generator with mathematically fair obstacle
-    /// and energy-coin pattern spawning.
-    /// Guarantees that every spawned row preserves at least one fair, reachable path
-    /// (open lane, jumpable barrier, or slide-under laser gate) and zero runtime Destroy calls.
+    /// Modular pooled endless track & 5-biome environment generator:
+    /// Neon City -> Cyber Underground -> Sky Highway -> Industrial Zone -> Digital Core.
+    /// Zero runtime Instantiate/Destroy; spawns fair obstacles, Sky Highway Road Gaps,
+    /// Energy Coin trails, and futuristic Power-Up pickups along reachable safe paths.
     /// </summary>
     public sealed class EndlessTrackManager : MonoBehaviour
     {
@@ -18,21 +20,38 @@ namespace CyberRunner.Environment
         [SerializeField] private Transform playerTransform;
         [SerializeField] private ObstaclePoolManager obstaclePool;
         [SerializeField] private CoinPoolManager coinPool;
+        [SerializeField] private PowerUpPoolManager powerUpPool;
 
         [Header("Shared Mobile URP Materials")]
-        [SerializeField] private Material roadDarkMaterial;
+        [SerializeField] private Material roadNeonCityMaterial;
+        [SerializeField] private Material roadUndergroundMaterial;
+        [SerializeField] private Material roadSkyHighwayMaterial;
+        [SerializeField] private Material roadIndustrialMaterial;
+        [SerializeField] private Material roadDigitalCoreMaterial;
+        [SerializeField] private Material buildingDarkMaterial;
+        [SerializeField] private Material steelIndustrialMaterial;
         [SerializeField] private Material neonCyanMaterial;
         [SerializeField] private Material neonPurpleMaterial;
-        [SerializeField] private Material buildingDarkMaterial;
+        [SerializeField] private Material neonMagentaMaterial;
+        [SerializeField] private Material neonGreenMaterial;
+        [SerializeField] private Material hazardRedMaterial;
+        [SerializeField] private Material hazardAmberMaterial;
 
-        private Transform[] segments;
+        public event Action<BiomeType> OnActiveBiomeChanged;
+
+        public BiomeType StartingBiome { get; private set; } = BiomeType.NeonCity;
+        public BiomeType ActiveBiome { get; private set; } = BiomeType.NeonCity;
+
+        private BiomeTrackSegment[] segments;
+        private BiomeMaterialPalette palette;
         private float segmentLength;
         private float laneWidth;
-        private float roadWidth;
         private float furthestSegmentZ;
         private int totalSegmentsSpawned;
         private int lastSafeLane;
         private float lastObstacleEndZ;
+        private float activeTrainSpeed = 9.5f;
+        private int segmentsSinceLastPowerUp;
         private bool built;
 
         public void Configure(
@@ -40,19 +59,28 @@ namespace CyberRunner.Environment
             Transform player,
             ObstaclePoolManager obstacles,
             CoinPoolManager coins,
-            Material roadDark,
-            Material neonCyan,
-            Material neonPurple,
-            Material buildingDark)
+            BiomeMaterialPalette materialPalette,
+            PowerUpPoolManager powerUps = null)
         {
             config = gameConfig;
             playerTransform = player;
             obstaclePool = obstacles;
             coinPool = coins;
-            roadDarkMaterial = roadDark;
-            neonCyanMaterial = neonCyan;
-            neonPurpleMaterial = neonPurple;
-            buildingDarkMaterial = buildingDark;
+            powerUpPool = powerUps;
+
+            roadNeonCityMaterial = materialPalette.RoadNeonCity;
+            roadUndergroundMaterial = materialPalette.RoadUnderground;
+            roadSkyHighwayMaterial = materialPalette.RoadSkyHighway;
+            roadIndustrialMaterial = materialPalette.RoadIndustrial;
+            roadDigitalCoreMaterial = materialPalette.RoadDigitalCore;
+            buildingDarkMaterial = materialPalette.BuildingDark;
+            steelIndustrialMaterial = materialPalette.SteelIndustrial;
+            neonCyanMaterial = materialPalette.NeonCyan;
+            neonPurpleMaterial = materialPalette.NeonPurple;
+            neonMagentaMaterial = materialPalette.NeonMagenta;
+            neonGreenMaterial = materialPalette.NeonGreen;
+            hazardRedMaterial = materialPalette.HazardRed;
+            hazardAmberMaterial = materialPalette.HazardAmber;
         }
 
         private void Awake()
@@ -64,76 +92,143 @@ namespace CyberRunner.Environment
 
             segmentLength = config.trackSegmentLength;
             laneWidth = config.laneWidth;
-            // Road width comfortably spans 3 lanes (3 * 2.9 = 8.7m) plus outer neon shoulders.
-            roadWidth = (laneWidth * 3f) + 1.1f;
 
-            EnsureMaterials();
+            BuildMaterialPalette();
             BuildSegmentPoolIfNeeded();
         }
 
+        public void SetStartingBiome(BiomeType biome)
+        {
+            StartingBiome = biome;
+        }
+
+        public BiomeType CycleStartingBiome()
+        {
+            int next = ((int)StartingBiome + 1) % BiomeCatalog.BiomeCount;
+            StartingBiome = (BiomeType)next;
+            return StartingBiome;
+        }
+
         /// <summary>
-        /// Resets the endless track, clears all pooled obstacles and coins, and seeds the safe intro runway.
+        /// Resets all 6 pooled track segments, obstacles, and coins starting in StartingBiome.
         /// </summary>
         public void ResetTrack()
         {
             BuildSegmentPoolIfNeeded();
 
-            if (obstaclePool != null)
-            {
-                obstaclePool.ReturnAll();
-            }
-
-            if (coinPool != null)
-            {
-                coinPool.ReturnAll();
-            }
+            if (obstaclePool != null) obstaclePool.ReturnAll();
+            if (coinPool != null) coinPool.ReturnAll();
+            if (powerUpPool != null) powerUpPool.ReturnAll();
 
             totalSegmentsSpawned = 0;
             lastSafeLane = 0;
             lastObstacleEndZ = 0f;
+            activeTrainSpeed = 9.0f;
+            segmentsSinceLastPowerUp = 1;
+            ActiveBiome = StartingBiome;
 
             for (int i = 0; i < segments.Length; i++)
             {
                 float z = i * segmentLength;
-                segments[i].position = new Vector3(0f, 0f, z);
+                BiomeType segBiome = GetBiomeForWorldZ(z);
+                bool hasGap = ShouldSegmentHaveGap(segBiome, totalSegmentsSpawned);
+
+                segments[i].transform.position = new Vector3(0f, 0f, z);
+                segments[i].ConfigureForBiome(segBiome, hasGap);
                 furthestSegmentZ = z;
-                PopulateSegment(z, totalSegmentsSpawned, config.baseRunSpeed);
+
+                PopulateSegment(z, totalSegmentsSpawned, segBiome, hasGap, config.baseRunSpeed, 19.5f);
                 totalSegmentsSpawned++;
             }
+
+            OnActiveBiomeChanged?.Invoke(ActiveBiome);
         }
 
         /// <summary>
-        /// Recycles passed highway segments ahead of the player and populates them with fair patterns.
+        /// Recycles passed segments ahead of the player, animates active ambient props,
+        /// and emits OnActiveBiomeChanged the moment the runner crosses into a new sector.
         /// </summary>
-        public void TickTrack(float playerZ, float currentForwardSpeed)
+        public void TickTrack(
+            float playerZ,
+            float currentForwardSpeed,
+            float deltaTime,
+            float minRowSpacingOverride = 0f,
+            float trainApproachSpeed = 9.5f)
         {
             if (!built)
             {
                 return;
             }
 
+            activeTrainSpeed = Mathf.Max(8f, trainApproachSpeed);
+
+            BiomeType playerBiome = GetBiomeForWorldZ(playerZ);
+            if (playerBiome != ActiveBiome)
+            {
+                ActiveBiome = playerBiome;
+                OnActiveBiomeChanged?.Invoke(ActiveBiome);
+            }
+
             float recycleThresholdZ = playerZ - (segmentLength * 1.15f);
             for (int i = 0; i < segments.Length; i++)
             {
-                Transform seg = segments[i];
-                if (seg.position.z < recycleThresholdZ)
+                BiomeTrackSegment seg = segments[i];
+                if (seg.transform.position.z < recycleThresholdZ)
                 {
                     furthestSegmentZ += segmentLength;
-                    seg.position = new Vector3(0f, 0f, furthestSegmentZ);
-                    PopulateSegment(furthestSegmentZ, totalSegmentsSpawned, currentForwardSpeed);
+                    BiomeType nextBiome = GetBiomeForWorldZ(furthestSegmentZ);
+                    bool hasGap = ShouldSegmentHaveGap(nextBiome, totalSegmentsSpawned);
+
+                    seg.transform.position = new Vector3(0f, 0f, furthestSegmentZ);
+                    seg.ConfigureForBiome(nextBiome, hasGap);
+
+                    PopulateSegment(furthestSegmentZ, totalSegmentsSpawned, nextBiome, hasGap, currentForwardSpeed, minRowSpacingOverride);
                     totalSegmentsSpawned++;
+                }
+
+                if (PerformanceOptimizer.Instance == null || PerformanceOptimizer.Instance.EnableAmbientPropAnimations)
+                {
+                    seg.TickAmbient(deltaTime);
                 }
             }
         }
 
-        private void PopulateSegment(float segmentStartZ, int segmentIndex, float forwardSpeed)
+        private BiomeType GetBiomeForWorldZ(float worldZ)
+        {
+            float interval = Mathf.Max(80f, config.biomeTransitionIntervalMeters);
+            int steps = Mathf.Max(0, Mathf.FloorToInt(Mathf.Max(0f, worldZ) / interval));
+            int biomeIndex = ((int)StartingBiome + steps) % BiomeCatalog.BiomeCount;
+            return (BiomeType)biomeIndex;
+        }
+
+        private bool ShouldSegmentHaveGap(BiomeType biome, int segmentIndex)
+        {
+            if (segmentIndex < config.safeIntroSegments)
+            {
+                return false;
+            }
+
+            if (biome != BiomeType.SkyHighway)
+            {
+                return false;
+            }
+
+            return UnityEngine.Random.value < config.skyHighwayGapChance;
+        }
+
+        private void PopulateSegment(
+            float segmentStartZ,
+            int segmentIndex,
+            BiomeType biome,
+            bool hasRoadGap,
+            float forwardSpeed,
+            float minRowSpacingOverride)
         {
             if (obstaclePool == null || coinPool == null)
             {
                 return;
             }
 
-            // First segments are obstacle-free intro runway with inviting Energy Coin lines.
             if (segmentIndex < config.safeIntroSegments)
             {
                 if (segmentIndex == 0)
@@ -149,113 +244,222 @@ namespace CyberRunner.Environment
                 return;
             }
 
-            // Compute fair spacing scaled with speed so every lane transition, jump, or slide is comfortable.
-            float minRowSpacing = Mathf.Clamp(forwardSpeed * 1.05f, 16f, 24f);
+            // If this Sky Highway segment has an open Road Gap (local z = 17..23), keep takeoff/landing 100% clear
+            // and place a rewarding parabolic Energy Coin arc right across the chasm!
+            float gapWorldCenter = segmentStartZ + BiomeTrackSegment.GapCenterLocalZ;
+            if (hasRoadGap)
+            {
+                coinPool.SpawnJumpArc(lastSafeLane, laneWidth, gapWorldCenter, count: 6, spanZ: 10.0f, baseHeightY: 1.0f, peakBoostY: 2.0f);
+            }
+
+            float minRowSpacing = minRowSpacingOverride > 12f
+                ? minRowSpacingOverride
+                : Mathf.Clamp(forwardSpeed * 1.05f, 16f, 24f);
             float cursorZ = Mathf.Max(segmentStartZ + 7f, lastObstacleEndZ + minRowSpacing);
             float segmentEndMargin = segmentStartZ + segmentLength - 6f;
 
-            // Progressively unlock richer patterns as the player travels farther.
-            int maxPatternPool = segmentIndex < 4 ? 4 : (segmentIndex < 8 ? 6 : 8);
-
             while (cursorZ <= segmentEndMargin)
             {
-                int patternId = Random.Range(0, maxPatternPool);
-                float extraClearance = SpawnFairPattern(patternId, cursorZ);
+                // Never spawn any obstacle near an open Road Gap takeoff or landing zone!
+                if (hasRoadGap && Mathf.Abs(cursorZ - gapWorldCenter) < 12.5f)
+                {
+                    cursorZ = gapWorldCenter + 12.5f;
+                    continue;
+                }
+
+                float extraClearance = SpawnBiomeFairPattern(biome, segmentIndex, cursorZ);
                 lastObstacleEndZ = cursorZ + extraClearance;
                 cursorZ = lastObstacleEndZ + minRowSpacing;
             }
-        }
 
-        /// <summary>
-        /// Spawns one mathematically fair obstacle & coin row, updating lastSafeLane.
-        /// Returns any extra forward Z clearance required (e.g., for long moving trains).
-        /// </summary>
-        private float SpawnFairPattern(int patternId, float rowZ)
-        {
-            int nextSafeLane = PickReachableSafeLane(lastSafeLane);
-
-            switch (patternId)
+            // Periodically spawn a glowing Power-Up pickup along the guaranteed safe lane!
+            segmentsSinceLastPowerUp++;
+            if (powerUpPool != null && segmentsSinceLastPowerUp >= 3)
             {
-                case 0:
-                    // Single Low Road Barrier with a parabolic coin arc right over it (2 open lanes).
-                    obstaclePool.Spawn(ObstacleType.LowRoadBarrier, nextSafeLane, laneWidth, rowZ);
-                    coinPool.SpawnJumpArc(nextSafeLane, laneWidth, rowZ);
-                    lastSafeLane = nextSafeLane;
-                    return 2f;
-
-                case 1:
-                    // Single Overhead Laser Gate with a low slide-coin trail (2 open lanes).
-                    obstaclePool.Spawn(ObstacleType.LaserGate, nextSafeLane, laneWidth, rowZ);
-                    coinPool.SpawnSlideTrail(nextSafeLane, laneWidth, rowZ);
-                    lastSafeLane = nextSafeLane;
-                    return 2f;
-
-                case 2:
-                    // Two Tall Security Monoliths + 1 guaranteed reachable Open Lane lined with coins.
-                    for (int lane = -1; lane <= 1; lane++)
-                    {
-                        if (lane != nextSafeLane)
-                        {
-                            obstaclePool.Spawn(ObstacleType.TallCyberBlock, lane, laneWidth, rowZ);
-                        }
-                    }
-                    coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 4.5f, count: 5, spacing: 2.3f);
-                    lastSafeLane = nextSafeLane;
-                    return 3f;
-
-                case 3:
-                    // Barrier + Laser Gate + 1 guaranteed Open Lane.
-                    int otherLaneA = WrapLane(nextSafeLane + 1);
-                    int otherLaneB = WrapLane(nextSafeLane - 1);
-                    obstaclePool.Spawn(ObstacleType.LowRoadBarrier, otherLaneA, laneWidth, rowZ);
-                    obstaclePool.Spawn(ObstacleType.LaserGate, otherLaneB, laneWidth, rowZ);
-                    coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 3.5f, count: 4, spacing: 2.3f);
-                    lastSafeLane = nextSafeLane;
-                    return 3f;
-
-                case 4:
-                    // Triple Low Road Barriers -> Jumpable in ALL 3 lanes (coin arc guides current lane).
-                    obstaclePool.Spawn(ObstacleType.LowRoadBarrier, -1, laneWidth, rowZ);
-                    obstaclePool.Spawn(ObstacleType.LowRoadBarrier, 0, laneWidth, rowZ);
-                    obstaclePool.Spawn(ObstacleType.LowRoadBarrier, 1, laneWidth, rowZ);
-                    coinPool.SpawnJumpArc(lastSafeLane, laneWidth, rowZ);
-                    return 3f;
-
-                case 5:
-                    // Triple Overhead Laser Gates -> Slideable in ALL 3 lanes (low coins guide current lane).
-                    obstaclePool.Spawn(ObstacleType.LaserGate, -1, laneWidth, rowZ);
-                    obstaclePool.Spawn(ObstacleType.LaserGate, 0, laneWidth, rowZ);
-                    obstaclePool.Spawn(ObstacleType.LaserGate, 1, laneWidth, rowZ);
-                    coinPool.SpawnSlideTrail(lastSafeLane, laneWidth, rowZ);
-                    return 3f;
-
-                case 6:
-                    // Hover Security Drone patrol (1 drone + 1 low barrier + 1 guaranteed open lane).
-                    int droneLane = WrapLane(nextSafeLane + 1);
-                    int barrierLane = WrapLane(nextSafeLane - 1);
-                    obstaclePool.Spawn(ObstacleType.HoverSecurityDrone, droneLane, laneWidth, rowZ);
-                    obstaclePool.Spawn(ObstacleType.LowRoadBarrier, barrierLane, laneWidth, rowZ);
-                    coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 4f, count: 5, spacing: 2.2f);
-                    lastSafeLane = nextSafeLane;
-                    return 3f;
-
-                default:
-                    // Approaching Cyber Maglev Train in one non-safe lane + guaranteed open coin lane.
-                    int trainLane = WrapLane(nextSafeLane + (Random.value < 0.5f ? 1 : -1));
-                    obstaclePool.Spawn(ObstacleType.MovingCyberTrain, trainLane, laneWidth, rowZ + 6f);
-                    coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 2f, count: 6, spacing: 2.4f);
-                    lastSafeLane = nextSafeLane;
-                    return 12f;
+                float pickupZ = hasRoadGap ? (segmentStartZ + 9.5f) : (segmentStartZ + (segmentLength * 0.5f) + 4f);
+                if (Mathf.Abs(pickupZ - lastObstacleEndZ) > 3.5f)
+                {
+                    PowerUpType randomPower = (PowerUpType)UnityEngine.Random.Range(0, PowerUpCatalog.PowerUpCount);
+                    powerUpPool.Spawn(randomPower, lastSafeLane, laneWidth, pickupZ, heightY: 1.3f);
+                    segmentsSinceLastPowerUp = 0;
+                }
             }
         }
 
         /// <summary>
-        /// Picks a safe lane within at most 1 lane step of the previous safe lane so transitions
-        /// are always physically comfortable even at high running speeds.
+        /// Selects a fair, reachable obstacle/coin pattern tailored to the active futuristic biome.
         /// </summary>
+        private float SpawnBiomeFairPattern(BiomeType biome, int segmentIndex, float rowZ)
+        {
+            int nextSafeLane = PickReachableSafeLane(lastSafeLane);
+            int otherA = WrapLane(nextSafeLane + 1);
+            int otherB = WrapLane(nextSafeLane - 1);
+            int roll = UnityEngine.Random.Range(0, 100);
+
+            switch (biome)
+            {
+                case BiomeType.CyberUnderground:
+                    if (roll < 26)
+                    {
+                        // Approaching underground maglev train + open coin lane
+                        obstaclePool.Spawn(ObstacleType.MovingCyberTrain, otherA, laneWidth, rowZ + 6f, activeTrainSpeed);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 2f, count: 6, spacing: 2.3f);
+                        lastSafeLane = nextSafeLane;
+                        return 12f;
+                    }
+                    if (roll < 55)
+                    {
+                        // Triple underground laser trap (slide clearable in all lanes)
+                        obstaclePool.Spawn(ObstacleType.LaserGate, -1, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LaserGate, 0, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LaserGate, 1, laneWidth, rowZ);
+                        coinPool.SpawnSlideTrail(lastSafeLane, laneWidth, rowZ);
+                        return 3f;
+                    }
+                    if (roll < 80)
+                    {
+                        // Security drone + laser gate + open coin lane
+                        obstaclePool.Spawn(ObstacleType.HoverSecurityDrone, otherA, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LaserGate, otherB, laneWidth, rowZ);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 3.5f, count: 5, spacing: 2.2f);
+                        lastSafeLane = nextSafeLane;
+                        return 3f;
+                    }
+                    return SpawnStandardOpenLaneBlockers(nextSafeLane, rowZ, ObstacleType.TallCyberBlock);
+
+                case BiomeType.SkyHighway:
+                    if (roll < 35)
+                    {
+                        obstaclePool.Spawn(ObstacleType.HoverSecurityDrone, otherA, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LowRoadBarrier, otherB, laneWidth, rowZ);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 3.5f, count: 5, spacing: 2.2f);
+                        lastSafeLane = nextSafeLane;
+                        return 3f;
+                    }
+                    if (roll < 70)
+                    {
+                        obstaclePool.Spawn(ObstacleType.LowRoadBarrier, nextSafeLane, laneWidth, rowZ);
+                        coinPool.SpawnJumpArc(nextSafeLane, laneWidth, rowZ);
+                        lastSafeLane = nextSafeLane;
+                        return 2.5f;
+                    }
+                    return SpawnTripleLowBarriers(rowZ);
+
+                case BiomeType.IndustrialZone:
+                    if (roll < 36)
+                    {
+                        // Spinning industrial hazard rotor with jumpable coin arc!
+                        obstaclePool.Spawn(ObstacleType.RotatingIndustrialBar, nextSafeLane, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.TallCyberBlock, otherA, laneWidth, rowZ);
+                        coinPool.SpawnJumpArc(nextSafeLane, laneWidth, rowZ);
+                        lastSafeLane = nextSafeLane;
+                        return 3.5f;
+                    }
+                    if (roll < 64)
+                    {
+                        // Dual industrial rotors + open safe lane
+                        obstaclePool.Spawn(ObstacleType.RotatingIndustrialBar, otherA, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.RotatingIndustrialBar, otherB, laneWidth, rowZ);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 3.5f, count: 5, spacing: 2.2f);
+                        lastSafeLane = nextSafeLane;
+                        return 3f;
+                    }
+                    if (roll < 84)
+                    {
+                        obstaclePool.Spawn(ObstacleType.MovingCyberTrain, otherB, laneWidth, rowZ + 6f, activeTrainSpeed);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 2f, count: 5, spacing: 2.4f);
+                        lastSafeLane = nextSafeLane;
+                        return 12f;
+                    }
+                    return SpawnStandardOpenLaneBlockers(nextSafeLane, rowZ, ObstacleType.TallCyberBlock);
+
+                case BiomeType.DigitalCore:
+                    if (roll < 38)
+                    {
+                        // Dual Electric Energy Walls + guaranteed open neon coin channel
+                        return SpawnStandardOpenLaneBlockers(nextSafeLane, rowZ, ObstacleType.ElectricEnergyWall);
+                    }
+                    if (roll < 68)
+                    {
+                        // Energy wall + laser gate + open lane
+                        obstaclePool.Spawn(ObstacleType.ElectricEnergyWall, otherA, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LaserGate, otherB, laneWidth, rowZ);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 4f, count: 5, spacing: 2.2f);
+                        lastSafeLane = nextSafeLane;
+                        return 3f;
+                    }
+                    if (roll < 85)
+                    {
+                        // Triple laser sweep (slide clearable in all lanes)
+                        obstaclePool.Spawn(ObstacleType.LaserGate, -1, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LaserGate, 0, laneWidth, rowZ);
+                        obstaclePool.Spawn(ObstacleType.LaserGate, 1, laneWidth, rowZ);
+                        coinPool.SpawnSlideTrail(lastSafeLane, laneWidth, rowZ);
+                        return 3f;
+                    }
+                    obstaclePool.Spawn(ObstacleType.RotatingIndustrialBar, otherA, laneWidth, rowZ);
+                    obstaclePool.Spawn(ObstacleType.HoverSecurityDrone, otherB, laneWidth, rowZ);
+                    coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 3.5f, count: 5, spacing: 2.2f);
+                    lastSafeLane = nextSafeLane;
+                    return 3f;
+
+                default: // NeonCity
+                    if (roll < 25)
+                    {
+                        obstaclePool.Spawn(ObstacleType.LowRoadBarrier, nextSafeLane, laneWidth, rowZ);
+                        coinPool.SpawnJumpArc(nextSafeLane, laneWidth, rowZ);
+                        lastSafeLane = nextSafeLane;
+                        return 2f;
+                    }
+                    if (roll < 48)
+                    {
+                        obstaclePool.Spawn(ObstacleType.LaserGate, nextSafeLane, laneWidth, rowZ);
+                        coinPool.SpawnSlideTrail(nextSafeLane, laneWidth, rowZ);
+                        lastSafeLane = nextSafeLane;
+                        return 2f;
+                    }
+                    if (roll < 70)
+                    {
+                        return SpawnStandardOpenLaneBlockers(nextSafeLane, rowZ, ObstacleType.TallCyberBlock);
+                    }
+                    if (roll < 85 && segmentIndex >= 4)
+                    {
+                        obstaclePool.Spawn(ObstacleType.MovingCyberTrain, otherA, laneWidth, rowZ + 6f, activeTrainSpeed);
+                        coinPool.SpawnLine(nextSafeLane, laneWidth, rowZ - 2f, count: 6, spacing: 2.4f);
+                        lastSafeLane = nextSafeLane;
+                        return 12f;
+                    }
+                    return SpawnTripleLowBarriers(rowZ);
+            }
+        }
+
+        private float SpawnStandardOpenLaneBlockers(int safeLane, float rowZ, ObstacleType blockerType)
+        {
+            for (int lane = -1; lane <= 1; lane++)
+            {
+                if (lane != safeLane)
+                {
+                    obstaclePool.Spawn(blockerType, lane, laneWidth, rowZ);
+                }
+            }
+
+            coinPool.SpawnLine(safeLane, laneWidth, rowZ - 4.5f, count: 5, spacing: 2.3f);
+            lastSafeLane = safeLane;
+            return 3f;
+        }
+
+        private float SpawnTripleLowBarriers(float rowZ)
+        {
+            obstaclePool.Spawn(ObstacleType.LowRoadBarrier, -1, laneWidth, rowZ);
+            obstaclePool.Spawn(ObstacleType.LowRoadBarrier, 0, laneWidth, rowZ);
+            obstaclePool.Spawn(ObstacleType.LowRoadBarrier, 1, laneWidth, rowZ);
+            coinPool.SpawnJumpArc(lastSafeLane, laneWidth, rowZ);
+            return 3f;
+        }
+
         private static int PickReachableSafeLane(int currentSafe)
         {
-            int delta = Random.Range(-1, 2); // -1, 0, or +1
+            int delta = UnityEngine.Random.Range(-1, 2);
             return Mathf.Clamp(currentSafe + delta, -1, 1);
         }
 
@@ -266,31 +470,40 @@ namespace CyberRunner.Environment
             return lane;
         }
 
-        private void EnsureMaterials()
+        private void BuildMaterialPalette()
         {
-            roadDarkMaterial = roadDarkMaterial ?? Resources.Load<Material>("Materials/CyberRoad_Dark");
-            neonCyanMaterial = neonCyanMaterial ?? Resources.Load<Material>("Materials/CyberNeon_Cyan");
-            neonPurpleMaterial = neonPurpleMaterial ?? Resources.Load<Material>("Materials/CyberNeon_Purple");
-            buildingDarkMaterial = buildingDarkMaterial ?? Resources.Load<Material>("Materials/CyberBuilding_Dark");
-
             Shader simpleLit = Shader.Find("Universal Render Pipeline/Simple Lit") ?? Shader.Find("Standard");
             Shader unlit = Shader.Find("Universal Render Pipeline/Unlit") ?? simpleLit;
 
-            roadDarkMaterial = roadDarkMaterial ?? CreateFallback(simpleLit, new Color(0.045f, 0.06f, 0.11f, 1f));
-            buildingDarkMaterial = buildingDarkMaterial ?? CreateFallback(simpleLit, new Color(0.03f, 0.04f, 0.085f, 1f));
-            neonCyanMaterial = neonCyanMaterial ?? CreateFallback(unlit, new Color(0.0f, 0.94f, 1.0f, 1f));
-            neonPurpleMaterial = neonPurpleMaterial ?? CreateFallback(unlit, new Color(0.68f, 0.22f, 1.0f, 1f));
+            palette = new BiomeMaterialPalette
+            {
+                RoadNeonCity = ResolveMat(roadNeonCityMaterial, "Materials/CyberRoad_Dark", simpleLit, new Color(0.045f, 0.06f, 0.11f, 1f)),
+                RoadUnderground = ResolveMat(roadUndergroundMaterial, "Materials/CyberRoad_Underground", simpleLit, new Color(0.07f, 0.05f, 0.06f, 1f)),
+                RoadSkyHighway = ResolveMat(roadSkyHighwayMaterial, "Materials/CyberRoad_Sky", simpleLit, new Color(0.07f, 0.12f, 0.22f, 1f)),
+                RoadIndustrial = ResolveMat(roadIndustrialMaterial, "Materials/CyberRoad_Industrial", simpleLit, new Color(0.11f, 0.09f, 0.07f, 1f)),
+                RoadDigitalCore = ResolveMat(roadDigitalCoreMaterial, "Materials/CyberRoad_Digital", simpleLit, new Color(0.03f, 0.07f, 0.12f, 1f)),
+
+                BuildingDark = ResolveMat(buildingDarkMaterial, "Materials/CyberBuilding_Dark", simpleLit, new Color(0.03f, 0.04f, 0.085f, 1f)),
+                SteelIndustrial = ResolveMat(steelIndustrialMaterial, "Materials/CyberSteel_Industrial", simpleLit, new Color(0.14f, 0.15f, 0.18f, 1f)),
+
+                NeonCyan = ResolveMat(neonCyanMaterial, "Materials/CyberNeon_Cyan", unlit, new Color(0.0f, 0.94f, 1.0f, 1f)),
+                NeonPurple = ResolveMat(neonPurpleMaterial, "Materials/CyberNeon_Purple", unlit, new Color(0.68f, 0.22f, 1.0f, 1f)),
+                NeonMagenta = ResolveMat(neonMagentaMaterial, "Materials/CyberNeon_Magenta", unlit, new Color(0.96f, 0.18f, 0.92f, 1f)),
+                NeonGreen = ResolveMat(neonGreenMaterial, "Materials/CyberNeon_Green", unlit, new Color(0.16f, 0.96f, 0.45f, 1f)),
+                HazardRed = ResolveMat(hazardRedMaterial, "Materials/CyberHazard_Red", unlit, new Color(1.0f, 0.14f, 0.28f, 1f)),
+                HazardAmber = ResolveMat(hazardAmberMaterial, "Materials/CyberHazard_Amber", unlit, new Color(1.0f, 0.62f, 0.08f, 1f))
+            };
         }
 
-        private static Material CreateFallback(Shader shader, Color color)
+        private static Material ResolveMat(Material assigned, string resourcePath, Shader fallbackShader, Color fallbackColor)
         {
-            if (shader == null)
-            {
-                return null;
-            }
+            if (assigned != null) return assigned;
+            Material loaded = Resources.Load<Material>(resourcePath);
+            if (loaded != null) return loaded;
+            if (fallbackShader == null) return null;
 
-            var mat = new Material(shader);
-            mat.SetColor("_BaseColor", color);
+            var mat = new Material(fallbackShader);
+            mat.SetColor("_BaseColor", fallbackColor);
             mat.enableInstancing = true;
             return mat;
         }
@@ -303,142 +516,18 @@ namespace CyberRunner.Environment
             }
 
             int count = Mathf.Max(4, config.activeTrackSegments);
-            segments = new Transform[count];
+            segments = new BiomeTrackSegment[count];
 
             for (int i = 0; i < count; i++)
             {
-                segments[i] = CreateHighwaySegment(i, i * segmentLength);
+                var segObj = new GameObject($"BiomeTrackSegment_{i}");
+                segObj.transform.SetParent(transform, false);
+                BiomeTrackSegment seg = segObj.AddComponent<BiomeTrackSegment>();
+                seg.BuildSegment(i, segmentLength, laneWidth, palette);
+                segments[i] = seg;
             }
 
             built = true;
-        }
-
-        private Transform CreateHighwaySegment(int index, float zPos)
-        {
-            var root = new GameObject($"HighwaySegment_{index}");
-            Transform tr = root.transform;
-            tr.SetParent(transform, false);
-            tr.position = new Vector3(0f, 0f, zPos);
-
-            // Solid highway deck (top surface strictly at Y = 0.0m, BoxCollider kept for CharacterController).
-            CreateMesh("RoadDeck", PrimitiveType.Cube, tr,
-                new Vector3(0f, -0.5f, segmentLength * 0.5f),
-                new Vector3(roadWidth, 1.0f, segmentLength),
-                roadDarkMaterial,
-                keepCollider: true);
-
-            // Outer neon edge curbs.
-            float edgeX = (roadWidth * 0.5f) - 0.16f;
-            CreateMesh("LeftNeonCurb", PrimitiveType.Cube, tr,
-                new Vector3(-edgeX, 0.05f, segmentLength * 0.5f),
-                new Vector3(0.22f, 0.10f, segmentLength),
-                neonCyanMaterial,
-                keepCollider: false);
-
-            CreateMesh("RightNeonCurb", PrimitiveType.Cube, tr,
-                new Vector3(edgeX, 0.05f, segmentLength * 0.5f),
-                new Vector3(0.22f, 0.10f, segmentLength),
-                neonCyanMaterial,
-                keepCollider: false);
-
-            // Crisp 3-lane divider lines at exactly +/- (laneWidth * 0.5f).
-            float dividerX = laneWidth * 0.5f;
-            CreateMesh("LaneDividerLeft", PrimitiveType.Cube, tr,
-                new Vector3(-dividerX, 0.015f, segmentLength * 0.5f),
-                new Vector3(0.08f, 0.02f, segmentLength),
-                neonPurpleMaterial,
-                keepCollider: false);
-
-            CreateMesh("LaneDividerRight", PrimitiveType.Cube, tr,
-                new Vector3(dividerX, 0.015f, segmentLength * 0.5f),
-                new Vector3(0.08f, 0.02f, segmentLength),
-                neonPurpleMaterial,
-                keepCollider: false);
-
-            // Futuristic roadside light pylons and flanking neon city skyscraper silhouettes.
-            float spacing = segmentLength * 0.5f;
-            for (int p = 0; p < 2; p++)
-            {
-                float localZ = (p + 0.5f) * spacing;
-                Material leftGlow = (p + index) % 2 == 0 ? neonCyanMaterial : neonPurpleMaterial;
-                Material rightGlow = (p + index) % 2 == 0 ? neonPurpleMaterial : neonCyanMaterial;
-                CreatePylon(tr, -edgeX - 0.65f, localZ, leftGlow);
-                CreatePylon(tr, edgeX + 0.65f, localZ, rightGlow);
-            }
-
-            float leftHeight = 18f + ((index * 7) % 14);
-            float rightHeight = 22f + ((index * 11) % 16);
-            CreateSkyscraperSilhouette(tr, -13.8f, segmentLength * 0.35f, leftHeight, neonCyanMaterial);
-            CreateSkyscraperSilhouette(tr, 13.8f, segmentLength * 0.72f, rightHeight, neonPurpleMaterial);
-
-            return tr;
-        }
-
-        private void CreatePylon(Transform parent, float xPos, float zPos, Material glowMat)
-        {
-            CreateMesh("PylonPost", PrimitiveType.Cube, parent,
-                new Vector3(xPos, 2.2f, zPos),
-                new Vector3(0.32f, 4.4f, 0.32f),
-                buildingDarkMaterial,
-                keepCollider: false);
-
-            CreateMesh("PylonGlow", PrimitiveType.Cube, parent,
-                new Vector3(xPos, 3.8f, zPos),
-                new Vector3(0.38f, 0.95f, 0.38f),
-                glowMat,
-                keepCollider: false);
-        }
-
-        private void CreateSkyscraperSilhouette(Transform parent, float xPos, float zPos, float height, Material trimMat)
-        {
-            CreateMesh("SkyscraperBody", PrimitiveType.Cube, parent,
-                new Vector3(xPos, (height * 0.5f) - 2f, zPos),
-                new Vector3(7.5f, height, 11f),
-                buildingDarkMaterial,
-                keepCollider: false);
-
-            float trimX = xPos > 0f ? xPos - 3.78f : xPos + 3.78f;
-            CreateMesh("SkyscraperNeonTrim", PrimitiveType.Cube, parent,
-                new Vector3(trimX, height * 0.52f, zPos),
-                new Vector3(0.14f, height * 0.65f, 0.35f),
-                trimMat,
-                keepCollider: false);
-        }
-
-        private static void CreateMesh(
-            string name,
-            PrimitiveType primitiveType,
-            Transform parent,
-            Vector3 localPos,
-            Vector3 localScale,
-            Material material,
-            bool keepCollider)
-        {
-            GameObject go = GameObject.CreatePrimitive(primitiveType);
-            go.name = name;
-
-            if (!keepCollider)
-            {
-                Collider col = go.GetComponent<Collider>();
-                if (col != null)
-                {
-                    Destroy(col);
-                }
-            }
-
-            Transform tr = go.transform;
-            tr.SetParent(parent, false);
-            tr.localPosition = localPos;
-            tr.localRotation = Quaternion.identity;
-            tr.localScale = localScale;
-
-            MeshRenderer renderer = go.GetComponent<MeshRenderer>();
-            if (renderer != null && material != null)
-            {
-                renderer.sharedMaterial = material;
-                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                renderer.receiveShadows = false;
-            }
         }
     }
 }

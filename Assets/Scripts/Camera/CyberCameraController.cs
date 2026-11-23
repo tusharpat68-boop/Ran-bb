@@ -48,12 +48,18 @@ namespace CyberRunner.CameraSystem
         private float shakeTimer;
         private float shakeDuration;
         private float shakeIntensity;
+        private bool menuShowcaseMode;
         private bool initialized;
 
         public float DistanceMultiplier
         {
             get => distanceMultiplier;
             set => distanceMultiplier = Mathf.Clamp(value, 0.75f, 1.45f);
+        }
+
+        public void SetMenuShowcaseMode(bool enabled)
+        {
+            menuShowcaseMode = enabled;
         }
 
         public void SetTarget(Transform targetTransform, PlayerController controller, GameConfig gameConfig)
@@ -139,6 +145,19 @@ namespace CyberRunner.CameraSystem
             float dt = Time.deltaTime;
             if (dt <= 0f)
             {
+                return;
+            }
+
+            if (menuShowcaseMode)
+            {
+                float orbit = Mathf.Sin(Time.unscaledTime * 0.45f) * 0.85f;
+                Vector3 showcasePos = target.position + new Vector3(1.65f + orbit, 2.05f, 3.85f);
+                Vector3 showcaseLook = target.position + new Vector3(0f, 1.15f, 0f);
+                float lerp = 1f - Mathf.Exp(-6f * Time.unscaledDeltaTime);
+                transform.position = Vector3.Lerp(transform.position, showcasePos, lerp);
+                currentLookTarget = Vector3.Lerp(currentLookTarget, showcaseLook, lerp);
+                transform.LookAt(currentLookTarget);
+                cachedCamera.fieldOfView = Mathf.Lerp(cachedCamera.fieldOfView, 54f, lerp);
                 return;
             }
 

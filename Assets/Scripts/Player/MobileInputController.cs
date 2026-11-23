@@ -61,6 +61,11 @@ namespace CyberRunner.Player
 
         private void OnEnable()
         {
+            if (SettingsManager.Instance != null)
+            {
+                SettingsManager.Instance.OnSettingsChanged += RecalculateThresholds;
+            }
+            RecalculateThresholds();
 #if ENABLE_INPUT_SYSTEM
             if (!EnhancedTouchSupport.enabled)
             {
@@ -71,6 +76,10 @@ namespace CyberRunner.Player
 
         private void OnDisable()
         {
+            if (SettingsManager.Instance != null)
+            {
+                SettingsManager.Instance.OnSettingsChanged -= RecalculateThresholds;
+            }
             activeFingerId = -1;
             swipeConsumed = false;
             mouseDragging = false;
@@ -85,11 +94,12 @@ namespace CyberRunner.Player
         private void RecalculateThresholds()
         {
             float swipeInches = config != null ? config.swipeThresholdInches : 0.24f;
+            float sensMult = SettingsManager.Instance != null ? SettingsManager.Instance.SwipeThresholdMultiplier : 1.0f;
             maxTapDuration = config != null ? config.maxTapDuration : 0.25f;
 
             float dpi = Screen.dpi > 1f ? Screen.dpi : 160f;
             // Clamp to a practical pixel band so low-DPI emulators and ultra-high-DPI OLED screens both feel crisp.
-            swipeThresholdPx = Mathf.Clamp(swipeInches * dpi, 36f, 160f);
+            swipeThresholdPx = Mathf.Clamp(swipeInches * sensMult * dpi, 28f, 180f);
         }
 
         private void Update()

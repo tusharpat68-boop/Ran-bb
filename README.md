@@ -1,58 +1,40 @@
-# CYBER RUNNER (Phase 2 — Core Gameplay)
+# CYBER RUNNER (`v1.0.0` — Final Release)
 
-Original futuristic 3D endless runner built with **Unity 6000.0 LTS (`6000.0.86f1`)**, **URP 17.0.4**, and **C#**, engineered for smooth gameplay on low-end Android phones (2GB–3GB RAM) and automated Android APK/AAB builds via **Termux + GitHub Actions** without a desktop computer.
+An original futuristic 3D cyberpunk endless runner set in **2099**, built with **Unity 6000.0 LTS (`6000.0.86f1`)**, **URP 17.0.4**, and **C#** — engineered from the ground up for smooth play on **low-end 2GB–3GB RAM Android phones** and automated APK/AAB builds strictly via **Android Termux + GitHub Actions** without a desktop PC.
 
-- **Package ID**: `com.cyberrunner.game`
-- **Orientation**: Portrait
-- **Unity Version**: `6000.0.86f1` (Unity 6.0 3-Year LTS)
-- **Current Build Version**: `v0.2.0` (Phase 2 — Core Gameplay)
-
----
-
-## Phase 2 Core Gameplay Features Included
-- **Three-Lane Movement**: Swipe Left / Right to switch lanes smoothly (`-2.9m`, `0m`, `+2.9m`) with lane input buffering and lateral banking animation.
-- **Jumping & Cyber-Sliding**: Swipe Up to jump (coyote time + jump buffer); Swipe Down to cyber-slide under laser gates & drones, or swipe down mid-air for a crisp fast-fall slam-to-slide!
-- **5 Pooled Cyberpunk Obstacles**:
-  1. `LowRoadBarrier` (Amber hazard strip — jump over)
-  2. `LaserGate` (Crimson overhead beams — slide under)
-  3. `TallCyberBlock` (Security monolith — dodge lanes)
-  4. `MovingCyberTrain` (Approaching futuristic maglev train with headlights)
-  5. `HoverSecurityDrone` (Oscillating mid-height drone — slide under or dodge)
-- **Fair Endless Track Generator**: Pre-warmed 6-segment highway with 2 obstacle-free intro segments and 8 mathematically fair obstacle/coin patterns that always preserve a reachable safe path.
-- **Energy Coin System**: Pooled glowing gold/cyan energy cores spawning in lane lines, jump arcs, and slide trails with anti-duplication guards and persistent balance.
-- **Side-Graze Stumble Forgiveness + Instant Zero-Lag Restart**: Clipping an edge while switching lanes causes a recoverable stumble with camera shake; head-on collisions show the Run Summary with instant `RUN AGAIN`.
+- **Android Package ID**: `com.cyberrunner.game`
+- **Orientation**: Portrait (`ScreenOrientation.Portrait`)
+- **Version**: `1.0.0` (All 8 Phases Complete)
+- **Playability**: 100% offline-first, zero IAPs, zero ad/tracking SDKs, zero external API keys
 
 ---
 
-## Termux Quickstart (Using `CyberRunner-Phase2.zip`)
+## Complete Feature Set (Phases 1–8)
+- **Core 3-Lane Runner Gameplay**: Snappy swipe controls with DPI-normalized sensitivity, lane banking, jump coyote time & buffering, cyber-slide + mid-air fast-fall slam, zero-GC PhysX trigger queries, and side-graze stumble forgiveness.
+- **5 Procedural Futuristic Environments**: `Neon City`, `Cyber Underground`, `Sky Highway` (with fair jumpable Road Gaps), `Industrial Zone`, and `Digital Core`, with smooth dynamic fog/sky/lighting transitions and 7 pooled obstacle types.
+- **6 Power-Ups & Special Ability**: `Energy Magnet`, `Cyber Shield`, `Speed Boost` (rams obstacles), `Double Energy`, `Hover Boots`, and `Drone Support` (companion laser drone) — usable via pickups or the HUD Special Ability cooldown button.
+- **4 Playable Game Modes**: `ENDLESS`, `MISSION`, `TIME 90s`, and `OVERDRIVE` (`SpecialChallenge`).
+- **Offline Progression & Cyber Hub**: Versioned atomic JSON save with `.bak` recovery & FNV-1a integrity verification, 6 cosmetic runner skins, Lv.0–3 Power-Up Overclock upgrades (in-game Energy only), rotating Daily Missions + Career Missions, 8 Achievements, 7-Day Daily Login Rewards, and Offline Local Top-5 Leaderboard.
+- **Futuristic UI, Synthwave Audio & Haptics**: Live 3D runner Main Menu, dedicated Settings screen, zero-copyright procedural 120 BPM cyberpunk synthwave BGM + 12 SFX, Android native `VibrationEffect` haptics, and smooth UI animations.
+- **2GB–3GB RAM Android Optimization**: First-launch hardware auto-tiering (`LOW + 30 FPS` on 2–3GB RAM phones), `LOW/MEDIUM/HIGH` URP/camera/fog/LOD scaling, SRP Batcher, GPU Instancing, `Application.lowMemory` protection, IL2CPP `OptimizeSize`, and toggleable on-device `PERF MONITOR`.
+- **Production Release Pipeline**: Automated 512×512 cyberpunk App Icon & Splash Screen generator, Pre-Flight Release Validator, signed APK & Google Play AAB GitHub Actions workflows, and Termux keystore guide (`RELEASE_GUIDE.md`).
 
-### 1. Unzip in Termux & Push to GitHub
+---
+
+## Termux Quickstart (Deploy Updated CI + Project)
 ```bash
-pkg update && pkg upgrade -y
-pkg install git gh unzip -y
-termux-setup-storage
-gh auth login
+# Extract update & sync into your Git repository root
+cp ~/storage/downloads/CyberRunner-Final-v1.0.2-CI-Fix.zip ~
+rm -rf ~/CyberRunner-update && unzip -o ~/CyberRunner-Final-v1.0.2-CI-Fix.zip -d ~/CyberRunner-update
+cd ~/Ran-bb   # or your local repo directory
+cp -r ~/CyberRunner-update/CyberRunner/. .
 
-# Copy zip from Android Downloads into Termux home and extract
-cp ~/storage/downloads/CyberRunner-Phase2.zip ~
-unzip -o ~/CyberRunner-Phase2.zip -d ~
-cd ~/CyberRunner
+# Ensure the obsolete manual ALF workflow is removed from Git history on the branch
+git rm -f --ignore-unmatch .github/workflows/unity-activation.yml
 
-git init -b main
 git add .
-git commit -m "Phase 2: Core Gameplay - 3-lane movement, sliding, obstacles, coins, endless track"
-gh repo create cyber-runner --private --source=. --remote=origin --push
+git commit -m "Remove deprecated unity-request-activation-file@v2 workflow and update GameCI v4 Unity 6000.0.86f1 Android CI"
+git push origin main
 ```
-*(If your repo already exists on GitHub, instead of `gh repo create`, run `git remote add origin https://github.com/<YOUR_USER>/cyber-runner.git && git push -u origin main --force` or pull/commit normally.)*
 
-### 2. Activate Free Unity Personal License (One Time, Phone Browser Only)
-1. GitHub Repo -> **Actions** -> **Unity License Activation Request** -> **Run workflow**.
-2. Download the `.alf` file artifact and upload it at `https://license.unity3d.com/manual` (choose Unity Personal) to get your `.ulf` file.
-3. Add repo secrets under **Settings -> Secrets and variables -> Actions**:
-   - `UNITY_LICENSE` (full text of `.ulf`)
-   - `UNITY_EMAIL`
-   - `UNITY_PASSWORD`
-
-### 3. Build & Install Phase 2 APK
-1. GitHub Repo -> **Actions** -> **CYBER RUNNER Android Build** -> **Run workflow**.
-2. Download `CyberRunner-Android-v0.2.0-build<N>`, extract `CyberRunner.apk`, and install on your Android phone!
+See **`RELEASE_GUIDE.md`** for current GameCI v4 Unity Personal `.ulf` licensing instructions, Termux keystore generation, GitHub Secrets setup, and Google Play Console submission steps.
